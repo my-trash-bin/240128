@@ -1,0 +1,288 @@
+model User {
+  id         Int      @id @default(autoincrement())
+  created_at DateTime @default(now())
+
+  // Separating User and UserProfile/UserAuthentication/... models to maintain a manageable size for the User model
+  profile_id        Int @unique
+  authentication_id Int @unique
+
+  // relationships
+  relations_smaller  UserRelation[]       @relation("UserRelation_smaller")
+  relations_bigger   UserRelation[]       @relation("UserRelation_bigger")
+  relationCache_from UserRelationByUser[] @relation("UserRelationByUser_from")
+  relationCache_to   UserRelationByUser[] @relation("UserRelationByUser_to")
+  following          UserFollow[]         @relation("UserFollow_from")
+  followed           UserFollow[]         @relation("UserFollow_to")
+
+  // other 1:n
+  passwordHistory          UserPasswordHistory[] // To prevent user set password previously used
+  email                    UserEmail[]
+  actor                    Actor?
+  owned_groups             Group[]
+  groups                   GroupMember[]
+  ArticleEditHistory       ArticleEditHistory[]
+  UserPasswordResetRequest UserPasswordResetRequest[]
+
+  // 1:1
+  profile        UserProfile        @relation(fields: [profile_id], references: [id])
+  authentication UserAuthentication @relation(fields: [authentication_id], references: [id])
+}
+
+model UserRelation {
+  user_id_smaller Int
+  user_id_bigger  Int
+  created_at      DateTime @default(now())
+
+  smaller User                 @relation("UserRelation_smaller", fields: [user_id_smaller], references: [id])
+  bigger  User                 @relation("UserRelation_bigger", fields: [user_id_bigger], references: [id])
+  by_user UserRelationByUser[]
+
+  @@id([user_id_smaller, user_id_bigger])
+}
+
+model UserRelationByUser {
+  // 2 rows for each UserRelation row
+  from_id Int
+  to_id   Int
+
+  key_smaller Int
+  key_bigger  Int
+
+  is_friend        Boolean  @default(true)
+  created_at_cache DateTime // from UserRelation::created_at
+
+  from     User         @relation("UserRelationByUser_from", fields: [from_id], references: [id])
+  to       User         @relation("UserRelationByUser_to", fields: [to_id], references: [id])
+  relation UserRelation @relation(fields: [key_smaller, key_bigger], references: [user_id_smaller, user_id_bigger])
+
+  @@id([from_id, to_id])
+  @@index([from_id, is_friend, created_at_cache])
+}
+
+model UserRelationFriendRequests {
+  from_id            Int
+  to_id              Int
+  message_json       String
+  created_at         DateTime @default(now())
+  is_cancelled       Boolean
+  is_rejected        Boolean
+  is_available_cache Boolean // !is_cancelled && !is_rejected
+
+  @@id([from_id, to_id])
+  @@index([from_id, created_at])
+  @@index([to_id, created_at])
+  @@index([from_id, is_available_cache, created_at])
+  @@index([to_id, is_available_cache, created_at])
+}
+
+model UserFollow {
+  from_id    Int
+  to_id      Int
+  created_at DateTime @default(now())
+
+  from User @relation("UserFollow_from", fields: [from_id], references: [id])
+  to   User @relation("UserFollow_to", fields: [to_id], references: [id])
+
+  @@id([from_id, to_id])
+  @@index([from_id, created_at])
+  @@index([to_id, created_at])
+}
+
+model UserAuthentication {
+  id            Int    @id @default(autoincrement())
+  password_hash String // hash(user_id, password)
+
+  user User?
+}
+
+model UserPasswordResetRequest {
+  user_id        Int
+  email          String
+  created_at     DateTime
+  expire_at      DateTime
+  password_hash  String
+  reset_at       DateTime?
+  cancelled_at   DateTime?
+  is_valid_cache Boolean // reset_at === null && cancelled_at === null
+
+  user User @relation(fields: [user_id], references: [id])
+
+  @@id([user_id, created_at])
+  @@index([user_id, is_valid_cache, created_at])
+}
+
+model UserLoginHistory {
+  user_id    Int
+  created_at DateTime @default(now())
+  ip_address String
+
+  @@id([user_id, created_at])
+}
+
+model UserProfile {
+  id                  Int    @id @default(autoincrement())
+  nickname            String @unique
+  introduction_bbcode String
+  profile_image_id    Int?
+
+  User User?
+
+  profile_image File? @relation(fields: [profile_image_id], references: [id])
+}
+
+model UserPasswordHistory {
+  user_id       Int
+  password_hash String // hash(user_id, password)
+
+  user User @relation(fields: [user_id], references: [id])
+
+  @@id([user_id, password_hash])
+}
+
+model UserEmail {
+  email         String   @id
+  user_id       Int?
+  blocked_cache Boolean // true if user_id is null
+  created_at    DateTime @default(now())
+
+  user User? @relation(fields: [user_id], references: [id])
+
+  @@index([blocked_cache, email])
+}
+
+model Group {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  owner_id Int
+
+  owner    User            @relation(fields: [owner_id], references: [id])
+  members  GroupMember[]
+  actor    Actor?
+  auditLog GroupAuditLog[]
+}
+
+model GroupMember {
+  group_id Int
+  user_id  Int
+
+  group Group @relation(fields: [group_id], references: [id])
+  user  User  @relation(fields: [user_id], references: [id])
+
+  @@id([group_id, user_id])
+}
+
+model GroupAuditLog {
+  id         Int      @id @default(autoincrement())
+  group_id   Int
+  created_at DateTime @default(now())
+  logJson    String
+
+  group Group @relation(fields: [group_id], references: [id])
+}
+
+enum ActorType {
+  USER
+  GROUP
+}
+
+model Actor {
+  id   Int       @id @default(autoincrement())
+  type ActorType
+
+  user_id  Int? @unique
+  group_id Int? @unique
+
+  user  User?  @relation(fields: [user_id], references: [id])
+  group Group? @relation(fields: [group_id], references: [id])
+
+  owned_articles  Article[]
+  edited_articles ArticleEditHistory[]
+}
+
+model File {
+  // When upload:
+  // 1. create File with reference_count = 0
+  // 2. upload to its ObjectStorage
+  // 3. reference File and increase reference_count at once
+  // When collect garbage: delete rows with zero-reference_count and old enough
+  id              Int      @id @default(autoincrement())
+  name            String
+  provider_and_id String
+  reference_count Int
+  mark_as_deleted Boolean
+  created_at      DateTime @default(now())
+
+  userProfiles UserProfile[]
+  articles     ArticleEditHistoryFile[]
+
+  @@index([reference_count, created_at])
+}
+
+model Article {
+  id         Int      @id @default(autoincrement())
+  owner_id   Int?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  owner Actor? @relation(fields: [owner_id], references: [id])
+}
+
+model ArticleEditHistory {
+  article_id     Int
+  created_at     DateTime @default(now())
+  title          String?
+  message_bbcode String
+  actor_id       Int
+  user_id        Int
+
+  files ArticleEditHistoryFile[]
+  actor Actor                    @relation(fields: [actor_id], references: [id])
+  user  User                     @relation(fields: [user_id], references: [id])
+
+  @@id([article_id, created_at])
+}
+
+model ArticleEditHistoryFile {
+  article_edit_history_id Int
+  file_id                 Int
+  created_at              DateTime @default(now())
+
+  article ArticleEditHistory @relation(fields: [article_edit_history_id, created_at], references: [article_id, created_at])
+  file    File               @relation(fields: [file_id], references: [id])
+
+  @@id([article_edit_history_id, file_id])
+}
+
+enum ProductType {
+  PYHSICAL
+  DIGITAL
+}
+
+model Product {
+  id                 Int         @id @default(autoincrement())
+  name               String
+  description        String
+  type               ProductType
+  physical_productId Int?        @unique
+  digital_productId  Int?        @unique
+
+  physical_product PhysicalProduct?
+  digital_product  DigitalProduct?
+}
+
+model PhysicalProduct {
+  id                      Int     @id @default(autoincrement())
+  info_summary_json_cache String
+  info_json               String
+  product_id              Int     @unique
+  product                 Product @relation(fields: [product_id], references: [id])
+}
+
+model DigitalProduct {
+  id                      Int     @id @default(autoincrement())
+  info_summary_json_cache String
+  info_json               String
+  product_id              Int     @unique
+  product                 Product @relation(fields: [product_id], references: [id])
+}
