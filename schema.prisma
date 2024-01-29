@@ -1,5 +1,13 @@
+enum UserRole {
+  NONE
+  SELLER
+  SUPER_SELLER
+  ADMIN
+}
+
 model User {
   id        Int      @id @default(autoincrement())
+  role      UserRole
   createdAt DateTime @default(now())
 
   // Separating User and UserProfile/UserAuthentication/... models to maintain a manageable size for the User model
@@ -7,27 +15,29 @@ model User {
   authenticationId Int @unique
 
   // relationships
-  relationsSmaller  UserRelation[]       @relation("UserRelation_smaller")
-  relationsBigger   UserRelation[]       @relation("UserRelation_bigger")
-  relationCacheFrom UserRelationByUser[] @relation("UserRelationByUser_from")
-  relationCacheTo   UserRelationByUser[] @relation("UserRelationByUser_to")
-  following         UserFollow[]         @relation("UserFollow_from")
-  followed          UserFollow[]         @relation("UserFollow_to")
+  relationsSmaller          UserRelation[]              @relation("UserRelation_smaller")
+  relationsBigger           UserRelation[]              @relation("UserRelation_bigger")
+  relationCacheFrom         UserRelationCacheByUser[]   @relation("UserRelationCacheByUser_from")
+  relationCacheTo           UserRelationCacheByUser[]   @relation("UserRelationCacheByUser_to")
+  relationFriendRequestFrom UserRelationFriendRequest[] @relation("UserRelationFriendRequest_from")
+  relationFriendRequestTo   UserRelationFriendRequest[] @relation("UserRelationFriendRequest_to")
+  following                 UserFollow[]                @relation("UserFollow_from")
+  followed                  UserFollow[]                @relation("UserFollow_to")
 
   // other 1:n
-  passwordHistory          UserPasswordHistory[] // To prevent user set password previously used
+  passwordHistory          UserPasswordHistory[]
   email                    UserEmail[]
   actor                    Actor?
   ownedGroups              Group[]
   groups                   GroupMember[]
   articleEditHistory       ArticleEditHistory[]
   userPasswordResetRequest UserPasswordResetRequest[]
+  transactions             Transaction[]
+  inquiries                Inquiry[]
 
   // 1:1
   profile        UserProfile        @relation(fields: [profileId], references: [id])
   authentication UserAuthentication @relation(fields: [authenticationId], references: [id])
-  transactions   Transaction[]
-  inqueries      Inquery[]
 }
 
 model UserRelation {
@@ -35,14 +45,14 @@ model UserRelation {
   userIdBigger  Int
   createdAt     DateTime @default(now())
 
-  smaller User                 @relation("UserRelation_smaller", fields: [userIdSmaller], references: [id])
-  bigger  User                 @relation("UserRelation_bigger", fields: [userIdBigger], references: [id])
-  byUser  UserRelationByUser[]
+  smaller User                      @relation("UserRelation_smaller", fields: [userIdSmaller], references: [id])
+  bigger  User                      @relation("UserRelation_bigger", fields: [userIdBigger], references: [id])
+  byUser  UserRelationCacheByUser[]
 
   @@id([userIdSmaller, userIdBigger])
 }
 
-model UserRelationByUser {
+model UserRelationCacheByUser {
   // 2 rows for each UserRelation row
   fromId Int
   toId   Int
@@ -53,22 +63,26 @@ model UserRelationByUser {
   isFriend       Boolean  @default(true)
   createdAtCache DateTime // from UserRelation::createdAt
 
-  from     User         @relation("UserRelationByUser_from", fields: [fromId], references: [id])
-  to       User         @relation("UserRelationByUser_to", fields: [toId], references: [id])
+  from     User         @relation("UserRelationCacheByUser_from", fields: [fromId], references: [id])
+  to       User         @relation("UserRelationCacheByUser_to", fields: [toId], references: [id])
   relation UserRelation @relation(fields: [keySmaller, keyBigger], references: [userIdSmaller, userIdBigger])
 
   @@id([fromId, toId])
   @@index([fromId, isFriend, createdAtCache])
 }
 
-model UserRelationFriendRequests {
+model UserRelationFriendRequest {
   fromId           Int
   toId             Int
-  messageJson      String
+  articleId        Int      @unique
   createdAt        DateTime @default(now())
   isCancelled      Boolean
   isRejected       Boolean
   isAvailableCache Boolean // !isCancelled && !isRejected
+
+  from    User    @relation("UserRelationFriendRequest_from", fields: [fromId], references: [id])
+  to      User    @relation("UserRelationFriendRequest_to", fields: [toId], references: [id])
+  article Article @relation(fields: [articleId], references: [id])
 
   @@id([fromId, toId])
   @@index([fromId, createdAt])
@@ -94,8 +108,9 @@ model UserAuthentication {
   id           Int    @id @default(autoincrement())
   passwordHash String // hash(userId, password)
 
-  user  User?
-  OAuth OAuth[]
+  user         User?
+  oauth        OAuth[]
+  loginHistory UserLoginHistory[]
 }
 
 enum OAuthProvider {
@@ -104,14 +119,15 @@ enum OAuthProvider {
 }
 
 model OAuth {
-  provider     OAuthProvider
-  id           String
-  metadataJson String
-  userId       Int?
+  id       Int           @id @default(autoincrement())
+  provider OAuthProvider
+  oauthId  String
+  userId   Int?
 
-  user UserAuthentication? @relation(fields: [userId], references: [id])
+  user         UserAuthentication? @relation(fields: [userId], references: [id])
+  loginHistory UserLoginHistory[]
 
-  @@id([provider, id])
+  @@unique([provider, oauthId])
 }
 
 model UserPasswordResetRequest {
@@ -131,11 +147,15 @@ model UserPasswordResetRequest {
 }
 
 model UserLoginHistory {
-  userId    Int
-  createdAt DateTime @default(now())
-  ipAddress String
+  userAuthenticationId Int
+  createdAt            DateTime @default(now())
+  ipAddress            String
+  oauthId              Int?
 
-  @@id([userId, createdAt])
+  userAuthentication UserAuthentication @relation(fields: [userAuthenticationId], references: [id])
+  oauth              OAuth?             @relation(fields: [oauthId], references: [id])
+
+  @@id([userAuthenticationId, createdAt])
 }
 
 model UserProfile {
@@ -145,11 +165,12 @@ model UserProfile {
   profileImageId Int?
 
   User         User?
-  introduction Article? @relation(fields: [introductionId], references: [id])
-  profileImage File?    @relation(fields: [profileImageId], references: [id])
+  introduction Article?    @relation(fields: [introductionId], references: [id])
+  profileImage PublicFile? @relation(fields: [profileImageId], references: [id])
 }
 
 model UserPasswordHistory {
+  // To prevent user set password previously used
   userId       Int
   passwordHash String // hash(userId, password)
 
@@ -170,15 +191,19 @@ model UserEmail {
 }
 
 model Group {
-  id   Int    @id @default(autoincrement())
-  name String @unique
+  id             Int    @id @default(autoincrement())
+  name           String @unique
+  introductionId Int?   @unique
+  profileImageId Int?
 
   ownerId Int
 
-  owner    User            @relation(fields: [ownerId], references: [id])
-  members  GroupMember[]
-  actor    Actor?
-  auditLog GroupAuditLog[]
+  owner        User            @relation(fields: [ownerId], references: [id])
+  members      GroupMember[]
+  actor        Actor?
+  auditLog     GroupAuditLog[]
+  introduction Article?        @relation(fields: [introductionId], references: [id])
+  profileImage PublicFile?     @relation(fields: [profileImageId], references: [id])
 }
 
 model GroupMember {
@@ -219,14 +244,14 @@ model Actor {
   user  User?  @relation(fields: [userId], references: [id])
   group Group? @relation(fields: [groupId], references: [id])
 
-  ownedArticles        Article[]
-  editedArticles       ArticleEditHistory[]
-  physicalProduct      PhysicalProduct[]
-  digitalProduct       DigitalProduct[]
-  digitalProductSerise DigitalProductSerise[]
+  ownedFile                 PublicFile[]
+  ownedArticles             Article[]
+  editedArticles            ArticleEditHistory[]
+  ownedProduct              Product[]
+  ownedDigitalProductSeries DigitalProductSeries[]
 }
 
-model File {
+model PublicFile {
   // When upload:
   // 1. create File with referenceCount = 0
   // 2. upload to its ObjectStorage
@@ -236,13 +261,29 @@ model File {
   name           String
   providerAndId  String
   referenceCount Int
+  ownerId        Int
   markAsDeleted  Boolean
   createdAt      DateTime @default(now())
 
-  userProfiles UserProfile[]
-  articles     ArticleEditHistoryFile[]
+  owner Actor @relation(fields: [ownerId], references: [id])
+
+  userProfiles  UserProfile[]
+  groupProfiles Group[]
+  articles      ArticleEditHistoryFile[]
 
   @@index([referenceCount, createdAt])
+}
+
+model PrivateFile {
+  // Similar to PublicFile, but for digital product content only.
+  id            Int      @id @default(autoincrement())
+  name          String
+  providerAndId String
+  markAsDeleted Boolean
+  createdAt     DateTime @default(now())
+  productId     Int
+
+  product DigitalProduct @relation(fields: [productId], references: [id])
 }
 
 model Article {
@@ -256,6 +297,8 @@ model Article {
   lastVersion ArticleEditHistory @relation(fields: [id, createdAt], references: [articleId, createdAt])
 
   userProfileIntroduction          UserProfile?
+  userRelationFriendRequest        UserRelationFriendRequest?
+  groupIntroduction                Group?
   review                           Review?
   physicalProductDescription       PhysicalProduct?
   physicalProductAddonDetails      PhysicalProductAddon?
@@ -263,8 +306,10 @@ model Article {
   physicalProductSelectItemDetails PhysicalProductSelectItem?
   physicalProductOptionDetails     PhysicalProductOption?
   digitalProductDescription        DigitalProduct?
-  inqueryQuestion                  Inquery?                   @relation("Inquery_question")
-  inqueryAnswer                    Inquery?                   @relation("Inquery_answer")
+  inquiryQuestion                  Inquiry?                   @relation("Inquiry_question")
+  inquiryAnswer                    Inquiry?                   @relation("Inquiry_answer")
+
+  @@unique([id, createdAt])
 }
 
 model ArticleEditHistory {
@@ -278,7 +323,7 @@ model ArticleEditHistory {
   files   ArticleEditHistoryFile[]
   actor   Actor                    @relation(fields: [actorId], references: [id])
   user    User                     @relation(fields: [userId], references: [id])
-  Article Article[]
+  Article Article?
 
   @@id([articleId, createdAt])
 }
@@ -289,7 +334,7 @@ model ArticleEditHistoryFile {
   createdAt            DateTime @default(now())
 
   article ArticleEditHistory @relation(fields: [articleEditHistoryId, createdAt], references: [articleId, createdAt])
-  file    File               @relation(fields: [fileId], references: [id])
+  file    PublicFile         @relation(fields: [fileId], references: [id])
 
   @@id([articleEditHistoryId, fileId])
 }
@@ -304,13 +349,21 @@ model Product {
   name              String
   description       String
   type              ProductType
-  physicalProductId Int?        @unique
-  digitalProductId  Int?        @unique
+  ownerId           Int
+  visibilityByOwner Boolean
+  visibilityByAdmin Boolean
+  visibilityCache   Boolean // visibilityByOwner && visibilityByAdmin
+
+  physicalProductId Int? @unique
+  digitalProductId  Int? @unique
+
+  owner Actor @relation(fields: [ownerId], references: [id])
 
   physicalProduct PhysicalProduct?
   digitalProduct  DigitalProduct?
-  reviews         Review[]
-  inqueries       Inquery[]
+
+  reviews   Review[]
+  inquiries Inquiry[]
 }
 
 model Review {
@@ -323,18 +376,18 @@ model Review {
   article     Article             @relation(fields: [articleId], references: [id])
 }
 
-model Inquery {
+model Inquiry {
   id         Int      @id @default(autoincrement())
   userId     Int
-  productId  Int
+  productId  Int?
   questionId Int      @unique
   answeredAt DateTime
   answerId   Int?     @unique
 
   user     User     @relation(fields: [userId], references: [id])
-  product  Product  @relation(fields: [productId], references: [id])
-  question Article  @relation("Inquery_question", fields: [questionId], references: [id])
-  answer   Article? @relation("Inquery_answer", fields: [answerId], references: [id])
+  product  Product? @relation(fields: [productId], references: [id])
+  question Article  @relation("Inquiry_question", fields: [questionId], references: [id])
+  answer   Article? @relation("Inquiry_answer", fields: [answerId], references: [id])
 
   @@index([userId, productId])
   @@index([productId, userId])
@@ -345,14 +398,12 @@ model PhysicalProduct {
   id            Int  @id @default(autoincrement())
   productId     Int  @unique
   descriptionId Int  @unique
-  ownerId       Int
   price         Int
   stockQuantity Int?
 
   product Product @relation(fields: [productId], references: [id])
 
   description  Article                          @relation(fields: [descriptionId], references: [id])
-  owner        Actor                            @relation(fields: [ownerId], references: [id])
   addons       PhysicalProductAddon[]
   selects      PhysicalProductSelect[]
   options      PhysicalProductOption[]
@@ -393,79 +444,84 @@ model PhysicalProductSelectItem {
   name            String
   detailsId       Int?   @unique
 
-  parent  PhysicalProductSelect  @relation("PhysicalProductSelectItem_parent", fields: [selectId], references: [id])
-  default PhysicalProductSelect? @relation("PhysicalProductSelect_defaultItem")
-  details Article?               @relation(fields: [detailsId], references: [id])
-}
-
-model PhysicalProductOption {
-  id        Int    @id @default(autoincrement())
-  productId Int
-  price     Int
-  name      String
-  detailsId Int?   @unique
-
-  product      PhysicalProduct                  @relation(fields: [productId], references: [id])
+  parent       PhysicalProductSelect            @relation("PhysicalProductSelectItem_parent", fields: [selectId], references: [id])
+  default      PhysicalProductSelect?           @relation("PhysicalProductSelect_defaultItem")
   details      Article?                         @relation(fields: [detailsId], references: [id])
   transactions TransactionBuyItemPhysicalItem[]
 }
 
-model DigitalProduct {
-  // user cannot buy same digital product multiple times
-  id            Int  @id @default(autoincrement())
-  productId     Int  @unique
-  descriptionId Int  @unique
-  seriseId      Int? @unique
-  ownerId       Int
+model PhysicalProductOption {
+  id              Int    @id @default(autoincrement())
+  productId       Int
+  additionalPrice Int
+  name            String
+  detailsId       Int?   @unique
+  valueTypeJson   String
 
-  product Product @relation(fields: [productId], references: [id])
+  product PhysicalProduct @relation(fields: [productId], references: [id])
+  details Article?        @relation(fields: [detailsId], references: [id])
 
-  description Article                @relation(fields: [descriptionId], references: [id])
-  owner       Actor                  @relation(fields: [ownerId], references: [id])
-  option      DigitalProductOption[]
+  transactions TransactionBuyItemPhysicalItem[]
 }
 
-model DigitalProductSerise {
+model DigitalProduct {
+  // user can buy same digital product multiple times to extend validity
+  id            Int    @id @default(autoincrement())
+  productId     Int    @unique
+  descriptionId Int    @unique
+  metadataJson  String
+  seriesId      Int?
+
+  product     Product               @relation(fields: [productId], references: [id])
+  series      DigitalProductSeries? @relation(fields: [seriesId], references: [id])
+  description Article               @relation(fields: [descriptionId], references: [id])
+
+  items DigitalProductItem[]
+  files PrivateFile[]
+}
+
+model DigitalProductSeries {
   id      Int    @id @default(autoincrement())
   name    String @unique
   ownerId Int
 
-  owner Actor @relation(fields: [ownerId], references: [id])
+  owner Actor            @relation(fields: [ownerId], references: [id])
+  items DigitalProduct[]
 }
 
-model DigitalProductOption {
-  id            Int  @id @default(autoincrement())
-  productId     Int
-  price         Int
-  stockQuantity Int?
-  duration      Int? // how long user can view the content, null if infinity
+model DigitalProductItem {
+  id               Int  @id @default(autoincrement())
+  productId        Int
+  price            Int
+  stockQuantity    Int?
+  validityDuration Int? // how long user can view the content, null if infinity
 
   product      DigitalProduct              @relation(fields: [productId], references: [id])
   transactions TransactionBuyItemDigital[]
 
-  @@unique([productId, duration])
+  @@unique([productId, validityDuration])
 }
 
-model UserDigitalProduction {
+model UserDigitalProduct {
   id        Int       @id @default(autoincrement())
   userId    Int
   productId Int
   createdAt DateTime  @default(now())
   expiresAt DateTime?
 
-  items UserDigitalProductionItem[]
+  items UserDigitalProductItem[]
 }
 
-model UserDigitalProductionItem {
-  userDigitalProductionId Int
-  createdAt               DateTime @default(now())
-  transactionId           Int      @unique
+model UserDigitalProductItem {
+  userDigitalProductId Int
+  createdAt            DateTime  @default(now())
+  transactionId        Int       @unique
+  startAt              DateTime?
 
-  userDigitalProduction UserDigitalProduction @relation(fields: [userDigitalProductionId], references: [id])
+  userDigitalProduct UserDigitalProduct        @relation(fields: [userDigitalProductId], references: [id])
+  transaction        TransactionBuyItemDigital @relation(fields: [transactionId], references: [id])
 
-  transaction TransactionBuy @relation(fields: [transactionId], references: [id])
-
-  @@id([userDigitalProductionId, createdAt])
+  @@id([userDigitalProductId, createdAt])
 }
 
 enum TransactionType {
@@ -477,10 +533,12 @@ enum TransactionType {
 }
 
 model Transaction {
-  id        Int             @id @default(autoincrement())
-  type      TransactionType
-  userId    Int
-  createdAt DateTime        @default(now())
+  id                   Int             @id @default(autoincrement())
+  type                 TransactionType
+  userId               Int
+  createdAt            DateTime        @default(now())
+  userCreditBefore     Int
+  userCreditAfterCache Int
 
   buyId           Int? @unique
   chargeCreditId  Int? @unique
@@ -501,22 +559,19 @@ model Transaction {
 }
 
 model TransactionChargeCredit {
-  id               Int @id @default(autoincrement())
-  creditCount      Int
-  userCreditBefore Int
+  id          Int @id @default(autoincrement())
+  creditCount Int
 
   transaction Transaction?
 }
 
 model TransactionBuy {
-  id               Int                  @id @default(autoincrement())
-  items            TransactionBuyItem[]
-  priceSumCache    Int
-  userCreditBefore Int
-  refundedCredit   Int
+  id                    Int                  @id @default(autoincrement())
+  items                 TransactionBuyItem[]
+  priceSumCacheSnapshot Int
+  refundedCredit        Int
 
-  transaction               Transaction?
-  userDigitalProductionItem UserDigitalProductionItem?
+  transaction Transaction?
 }
 
 enum TransactionBuyItemType {
@@ -525,13 +580,11 @@ enum TransactionBuyItemType {
 }
 
 model TransactionBuyItem {
-  id            Int  @id @default(autoincrement())
-  transactionId Int
-  price         Int
-  reviewId      Int? @unique
-
-  type   TransactionBuyItemType
-  review Review?                @relation(fields: [reviewId], references: [id])
+  id                    Int                    @id @default(autoincrement())
+  transactionId         Int
+  priceSumCacheSnapshot Int
+  reviewId              Int?                   @unique
+  type                  TransactionBuyItemType
 
   physicalId Int? @unique
   digitalId  Int? @unique
@@ -539,6 +592,7 @@ model TransactionBuyItem {
   physical TransactionBuyItemPhysical? @relation(fields: [physicalId], references: [id])
   digital  TransactionBuyItemDigital?  @relation(fields: [physicalId], references: [id])
 
+  review             Review?                     @relation(fields: [reviewId], references: [id])
   transaction        TransactionBuy              @relation(fields: [transactionId], references: [id])
   refundTransactions TransactionRefund[]
   settleSalesItem    TransactionSettleSalesItem?
@@ -554,53 +608,61 @@ model TransactionBuyItemPhysical {
 enum TransactionBuyItemPhysicalItemType {
   ORIGINAL
   ADDON
+  SELECT_ITEM
   OPTION
 }
 
 model TransactionBuyItemPhysicalItem {
-  id            Int                                @id @default(autoincrement())
-  parentId      Int
-  type          TransactionBuyItemPhysicalItemType
-  pricePerCount Int
-  count         Int
-  refundedCount Int
+  id                     Int                                @id @default(autoincrement())
+  parentId               Int
+  type                   TransactionBuyItemPhysicalItemType
+  pricePerCountSnapshot  Int
+  count                  Int
+  refundedCount          Int
+  valueJson              String? // required on option
+  confirmedAt            DateTime?
+  confirmedAutomatically Boolean                            @default(false)
 
-  originalId Int?
-  addonId    Int?
-  optionId   Int?
+  originalId   Int?
+  addonId      Int?
+  selectItemId Int?
+  optionId     Int?
 
-  original PhysicalProduct?       @relation(fields: [originalId], references: [id])
-  addon    PhysicalProductAddon?  @relation(fields: [addonId], references: [id])
-  option   PhysicalProductOption? @relation(fields: [optionId], references: [id])
+  original   PhysicalProduct?           @relation(fields: [originalId], references: [id])
+  addon      PhysicalProductAddon?      @relation(fields: [addonId], references: [id])
+  selectItem PhysicalProductSelectItem? @relation(fields: [selectItemId], references: [id])
+  option     PhysicalProductOption?     @relation(fields: [optionId], references: [id])
 
   parent TransactionBuyItemPhysical @relation(fields: [parentId], references: [id])
 }
 
 model TransactionBuyItemDigital {
-  id     Int @id @default(autoincrement())
-  itemId Int
+  id                       Int  @id @default(autoincrement())
+  itemId                   Int
+  priceSnapshot            Int // from DigitalProductItem::price
+  validityDurationSnapshot Int? // from DigitalProductItem::validityDuration
 
   parent TransactionBuyItem?
-  item   DigitalProductOption @relation(fields: [itemId], references: [id])
+  item   DigitalProductItem  @relation(fields: [itemId], references: [id])
+
+  userDigitalProductItem UserDigitalProductItem?
 }
 
 model TransactionRefund {
-  id               Int      @id @default(autoincrement())
-  userCreditBefore Int
-  refundedCredit   Int
-  refundedAt       DateTime
-  remainCredit     Int
-  itemId           Int
+  id             Int      @id @default(autoincrement())
+  refundedCredit Int
+  refundedAt     DateTime
+  remainCredit   Int
+  itemId         Int
 
   transaction Transaction?
   item        TransactionBuyItem @relation(fields: [itemId], references: [id])
 }
 
 model TransactionSettleSales {
-  id               Int                          @id @default(autoincrement())
-  items            TransactionSettleSalesItem[]
-  creditCount      Int
-  userCreditBefore Int
+  id          Int                          @id @default(autoincrement())
+  items       TransactionSettleSalesItem[]
+  creditCount Int
 
   transaction Transaction?
 }
@@ -615,9 +677,8 @@ model TransactionSettleSalesItem {
 }
 
 model TransactionCashOutCredit {
-  id               Int @id @default(autoincrement())
-  creditCount      Int
-  userCreditBefore Int
+  id          Int @id @default(autoincrement())
+  creditCount Int
 
   transaction Transaction?
 }
