@@ -20,8 +20,8 @@
 - [x] Digital product - validity duration
 - [x] Physical product - original, addon, select, options
 - [x] User inventory
-- [ ] Product draft, review by admin
-- [ ] Report malicious product
+- [x] Product draft, review by admin
+- [x] Report malicious product
 - [ ] Return physical product
 - [ ] Refund
 - [ ] Cart
