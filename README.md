@@ -11,35 +11,63 @@
 
 ## feature list
 
-- [x] User, Authentication, OAuth, password reset, password history
-- [x] User relationships (friend, follow)
-- [x] File management
-- [x] Article management (for product description, review, message, etc.)
-- [x] Product Review
-- [x] Inquiry
-- [x] Digital product - validity duration
-- [x] Physical product - original, addon, select, options
-- [x] User inventory
-- [x] Product draft, review by admin
-- [x] Report malicious product
-- [ ] Return physical product
-- [ ] Refund
-- [ ] Cart
-- [ ] Order
-- [ ] Promotion
-- [ ] Announcement
-- [ ] Redeem
-- [ ] Restrict select item combinations
-- [ ] Coupon
-- [ ] Restrict coupon combinations
-- [ ] Cashback point
-- [ ] Wishlist
-- [ ] Gift
-- [ ] Chat
-- [ ] User role in group
-- [ ] Notification
-- [ ] Subscription service
-- [ ] Affiliate Marketing Model
-- [ ] Loyalty Programs
-- [ ] Statistics / Analytics
-- [ ] User profile page decoration using physical products
+- common, admin, system
+  - [ ] notification
+  - [ ] announcement
+  - [x] (system) file management (reference count)
+- login
+  - [x] by id & password
+  - [x] by social account
+  - [x] reset password by email
+  - [x] can't reset password to previously used password
+  - [x] attempt history
+  - [ ] toggle inactivity
+  - [ ] remove account
+- profile
+  - [x] unique nickname
+  - [x] profile image
+  - [x] rich text introduction including image
+  - [x] comment for user
+  - [x] report user
+- friend, follow
+  - [x] friend
+  - [x] chat with friend
+  - [x] follow
+  - [ ] gift products
+- buy product
+  - [x] comment
+  - [x] inquiry
+  - [x] report
+  - [ ] cart
+  - [ ] order
+  - [ ] buy
+  - [ ] subscription service
+  - [ ] wishlist
+  - [x] review
+  - [ ] cancel (digital product)
+  - [ ] return (physical product)
+  - [ ] refund
+  - [ ] cashback point
+  - [ ] loyalty programs
+- sell product
+  - [x] sell
+  - [x] group
+  - [ ] Restrict select item combinations
+  - [ ] user role in group
+  - [x] draft, review by admin
+  - [x] inquiry, message
+  - [x] review (snapshot)
+  - [ ] affiliate marketing model
+  - [ ] statistics / analytics
+- event
+  - [ ] redeem
+  - [ ] promotion
+    - [ ] restrict promotion combinations
+  - [ ] coupon
+    - [ ] restrict coupon combinations
+- transaction
+  - [x] log
+  - [ ] reference related items
+- miscellaneous
+  - [ ] decorate user profile using physical products owned
+  - [ ] real digital content viewer

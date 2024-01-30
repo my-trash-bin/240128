@@ -27,7 +27,6 @@ model User {
   // other 1:n
   passwordHistory           UserPasswordHistory[]
   email                     UserEmail[]
-  actor                     Actor?
   ownedGroups               Group[]
   groups                    GroupMember[]
   articleEditHistory        ArticleEditHistory[]
@@ -37,19 +36,21 @@ model User {
   publicFiles               PublicFile[]
   privateFiles              PrivateFile[]
   inquiries                 ProductInquiry[]
-  userInquiries_from        UserInquiry[]              @relation("UserInquiry_from")
-  userInquiries_to          UserInquiry[]              @relation("UserInquiry_to")
+  actorInquiries            ActorReport[]
+  returns                   Return[]
 
   // 1:1
   profile        UserProfile        @relation(fields: [profileId], references: [id])
   authentication UserAuthentication @relation(fields: [authenticationId], references: [id])
+  actor          Actor?
 }
 
 model UserRelation {
-  id            Int      @id @default(autoincrement())
-  userIdSmaller Int
-  userIdBigger  Int
-  createdAt     DateTime @default(now())
+  id                  Int       @id @default(autoincrement())
+  userIdSmaller       Int
+  userIdBigger        Int
+  createdAt           DateTime  @default(now())
+  friendshipStartedAt DateTime?
 
   smaller User @relation("UserRelation_smaller", fields: [userIdSmaller], references: [id])
   bigger  User @relation("UserRelation_bigger", fields: [userIdBigger], references: [id])
@@ -60,20 +61,21 @@ model UserRelation {
 
 model UserRelationCacheByUser {
   // 2 rows for each UserRelation row
-  fromId Int
-  toId   Int
-
+  fromId     Int
+  toId       Int
   relationId Int
 
-  isFriend       Boolean  @default(true)
-  createdAtCache DateTime // from UserRelation::createdAt
+  friendshipStartedAtCache DateTime? // from UserRelation::friendshipStartedAt
+  isFriendCache            Boolean // !!friendshipStartedAt
+  createdAtCache           DateTime // from UserRelation::createdAt
 
   from     User         @relation("UserRelationCacheByUser_from", fields: [fromId], references: [id])
   to       User         @relation("UserRelationCacheByUser_to", fields: [toId], references: [id])
   relation UserRelation @relation(fields: [relationId], references: [id])
 
   @@id([fromId, toId])
-  @@index([fromId, isFriend, createdAtCache])
+  @@index([fromId, isFriendCache, friendshipStartedAtCache])
+  @@index([fromId, isFriendCache, createdAtCache])
 }
 
 model UserRelationFriendRequest {
@@ -154,6 +156,7 @@ model UserPasswordResetRequest {
 model UserLoginHistory {
   userAuthenticationId Int
   createdAt            DateTime @default(now())
+  succeed              Boolean
   ipAddress            String
   oauthId              Int?
 
@@ -255,6 +258,8 @@ model Actor {
   ownedProducts             Product[]
   ownedDigitalProductSeries DigitalProductSeries[]
   ownedProductDrafts        ProductDraft[]
+  comment                   Subject?
+  reports                   ActorReport[]
 }
 
 model PublicFile {
@@ -816,25 +821,32 @@ enum UserInventoryItemType {
 }
 
 model UserInventoryItem {
-  id            Int                   @id @default(autoincrement())
-  type          UserInventoryItemType
-  userId        Int
-  created_at    DateTime              @default(now())
-  memo          String?
-  nameCache     String // memo ?? (concrete)::product::name
-  transactionId Int
-  used_at       DateTime?
+  id              Int                   @id @default(autoincrement())
+  type            UserInventoryItemType
+  userId          Int
+  createdAt       DateTime              @default(now())
+  memo            String?
+  nameCache       String // memo ?? (concrete)::product::name
+  transactionId   Int
+  usedAt          DateTime?
+  removedAt       DateTime?
+  isRemovedCache  Boolean // !!removedAt
+  isReturnedCache Boolean // !!return
+  returnedAtCache DateTime? // from return::createdAt
 
   originalId Int? @unique
   addonId    Int? @unique
 
-  original UserInventoryItemOriginal? @relation(fields: [originalId], references: [id])
-  addon    UserInventoryItemAddon?    @relation(fields: [addonId], references: [id])
-
   user        User                           @relation(fields: [userId], references: [id])
   transaction TransactionBuyItemPhysicalItem @relation(fields: [transactionId], references: [id])
 
-  @@index([userId, created_at])
+  original UserInventoryItemOriginal? @relation(fields: [originalId], references: [id])
+  addon    UserInventoryItemAddon?    @relation(fields: [addonId], references: [id])
+
+  return Return?
+
+  @@index([userId, isRemovedCache, createdAt])
+  @@index([userId, isRemovedCache, removedAt])
 }
 
 model UserInventoryItemOriginal {
@@ -1033,7 +1045,8 @@ model TransactionRefund {
 
   parent Transaction?
 
-  item TransactionBuyItem @relation(fields: [itemId], references: [id])
+  buyTransaction TransactionBuyItem @relation(fields: [itemId], references: [id])
+  return         Return? // required
 }
 
 model TransactionSettleSales {
@@ -1045,11 +1058,11 @@ model TransactionSettleSales {
 }
 
 model TransactionSettleSalesItem {
-  id            Int @id @default(autoincrement())
-  transactionId Int
-  itemId        Int @unique
+  id       Int @id @default(autoincrement())
+  parentId Int
+  itemId   Int @unique
 
-  parent TransactionSettleSales @relation(fields: [transactionId], references: [id])
+  parent TransactionSettleSales @relation(fields: [parentId], references: [id])
   item   TransactionBuyItem     @relation(fields: [itemId], references: [id])
 }
 
@@ -1092,10 +1105,12 @@ model DigitalProductCategory {
 
 enum SubjectType {
   PRODUCT_COMMENT
+  ACTOR_COMMENT
   USER_RELATION
   PRODUCT_DRAFT
   PRODUCT_INQUIRY
-  USER_INQUIRY
+  ACTOR_REPORT
+  RETURN
 }
 
 model Subject {
@@ -1104,16 +1119,20 @@ model Subject {
   createdAt DateTime    @default(now())
 
   productId        Int? @unique
+  actorId          Int? @unique
   userRelationId   Int? @unique
   productDraftId   Int? @unique
   productInquiryId Int? @unique
-  userInquiryId    Int? @unique
+  actorReportId    Int? @unique
+  returnId         Int? @unique
 
   product        Product?        @relation(fields: [productId], references: [id])
+  actor          Actor?          @relation(fields: [actorId], references: [id])
   userRelation   UserRelation?   @relation(fields: [userRelationId], references: [id])
   productDraft   ProductDraft?   @relation(fields: [productDraftId], references: [id])
   productInquiry ProductInquiry? @relation(fields: [productInquiryId], references: [id])
-  userInquiry    UserInquiry?    @relation(fields: [userInquiryId], references: [id])
+  actorReport    ActorReport?    @relation(fields: [actorReportId], references: [id])
+  return         Return?         @relation(fields: [returnId], references: [id])
 
   articles SubjectArticle[]
 }
@@ -1131,7 +1150,7 @@ model ProductInquiry {
   id            Int       @id @default(autoincrement())
   fromId        Int
   toId          Int
-  toAdmin       Boolean
+  toAdmin       Boolean // true if report, false if inquiry
   createdAt     DateTime  @default(now())
   clossedAt     DateTime? // never close if id is unique
   isClosedCache Boolean // !!closedAt
@@ -1142,12 +1161,12 @@ model ProductInquiry {
   product Product @relation(fields: [toId], references: [id])
 
   @@index([fromId, createdAt])
-  @@index([toAdmin, toId, createdAt])
   @@index([fromId, isClosedCache, createdAt])
+  @@index([toAdmin, toId, createdAt])
   @@index([toAdmin, toId, isClosedCache, createdAt])
 }
 
-model UserInquiry {
+model ActorReport {
   id            Int       @id @default(autoincrement())
   fromId        Int
   toId          Int
@@ -1157,9 +1176,31 @@ model UserInquiry {
 
   parent Subject?
 
-  from User @relation("UserInquiry_from", fields: [fromId], references: [id])
-  to   User @relation("UserInquiry_to", fields: [toId], references: [id])
+  from User  @relation(fields: [fromId], references: [id])
+  to   Actor @relation(fields: [toId], references: [id])
 
   @@index([fromId, createdAt])
   @@index([fromId, isClosedCache, createdAt])
+}
+
+model Return {
+  id                  Int       @id @default(autoincrement())
+  userInventoryItemId Int       @unique
+  createdAt           DateTime  @default(now())
+  transactionId       Int?      @unique
+  fulfilledAt         DateTime?
+  isFulfilledCache    Boolean // !!fulfilledAt
+  isAcceptedCache     Boolean // !!transaction
+  userIdCache         Int // from UserInventoryItem::userId
+  priceCache          Int // userInventoryItem::transaction::pricePerCountSnapshot
+
+  userInventoryItem UserInventoryItem  @relation(fields: [userInventoryItemId], references: [id])
+  transaction       TransactionRefund? @relation(fields: [transactionId], references: [id])
+  user              User               @relation(fields: [userIdCache], references: [id])
+
+  details Subject?
+
+  @@index([userIdCache, isFulfilledCache, createdAt])
+  @@index([userIdCache, isFulfilledCache, fulfilledAt])
+  @@index([userIdCache, isFulfilledCache, isAcceptedCache, fulfilledAt])
 }
