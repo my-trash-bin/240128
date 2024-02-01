@@ -44,7 +44,7 @@
   - [ ] order
   - [ ] buy
   - [ ] subscription service
-  - [ ] wishlist
+  - [x] wishlist
   - [x] review
   - [ ] cancel (digital product)
   - [ ] return (physical product)

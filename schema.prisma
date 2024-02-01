@@ -6,15 +6,15 @@ enum UserRole {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  role      UserRole
-  createdAt DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  role           UserRole
+  createdAt      DateTime @default(now())
+  passwordHash   String // hash(userId, password)
+  nickname       String   @unique
+  introductionId Int?     @unique
+  profileImageId Int?
 
-  // Separating User and UserProfile/UserAuthentication/... models to maintain a manageable size for the User model
-  profileId        Int @unique
-  authenticationId Int @unique
-
-  // relationships
+  // user relationships
   relationsSmaller          UserRelation[]              @relation("UserRelation_smaller")
   relationsBigger           UserRelation[]              @relation("UserRelation_bigger")
   relationCacheFrom         UserRelationCacheByUser[]   @relation("UserRelationCacheByUser_from")
@@ -33,17 +33,20 @@ model User {
   userPasswordResetRequests UserPasswordResetRequest[]
   transactions              Transaction[]
   inventoryItems            UserInventoryItem[]
-  publicFiles               PublicFile[]
-  privateFiles              PrivateFile[]
+  uploadedPublicFiles       PublicFile[]               @relation("PublicFile_uploadedUser")
+  uploadedPrivateFiles      PrivateFile[]
   inquiries                 ProductInquiry[]
   actorInquiries            ActorReport[]
   returns                   Return[]
   cartItems                 CartItem[]
+  wishlistItems             WishlistItem[]
+  oauth                     OAuth[]
+  loginHistory              UserLoginHistory[]
 
   // 1:1
-  profile        UserProfile        @relation(fields: [profileId], references: [id])
-  authentication UserAuthentication @relation(fields: [authenticationId], references: [id])
-  actor          Actor?
+  actor        Actor?
+  introduction Article?    @relation(fields: [introductionId], references: [id])
+  profileImage PublicFile? @relation("User_profileImage", fields: [profileImageId], references: [id])
 }
 
 model UserRelation {
@@ -66,9 +69,9 @@ model UserRelationCacheByUser {
   toId       Int
   relationId Int
 
-  friendshipStartedAtCache DateTime? // from UserRelation::friendshipStartedAt
+  friendshipStartedAtCache DateTime? // relation::friendshipStartedAt
   isFriendCache            Boolean // !!friendshipStartedAt
-  createdAtCache           DateTime // from UserRelation::createdAt
+  createdAtCache           DateTime // relation::createdAt
 
   from     User         @relation("UserRelationCacheByUser_from", fields: [fromId], references: [id])
   to       User         @relation("UserRelationCacheByUser_to", fields: [toId], references: [id])
@@ -112,15 +115,6 @@ model UserFollow {
   @@index([toId, createdAt])
 }
 
-model UserAuthentication {
-  id           Int    @id @default(autoincrement())
-  passwordHash String // hash(userId, password)
-
-  user         User?
-  oauth        OAuth[]
-  loginHistory UserLoginHistory[]
-}
-
 enum OAuthProvider {
   NAVER
   KAKAO
@@ -130,9 +124,9 @@ model OAuth {
   id       Int           @id @default(autoincrement())
   provider OAuthProvider
   oauthId  String
-  userId   Int?
+  parentId Int?
 
-  user         UserAuthentication? @relation(fields: [userId], references: [id])
+  parent       User?              @relation(fields: [parentId], references: [id])
   loginHistory UserLoginHistory[]
 
   @@unique([provider, oauthId])
@@ -155,27 +149,17 @@ model UserPasswordResetRequest {
 }
 
 model UserLoginHistory {
-  userAuthenticationId Int
-  createdAt            DateTime @default(now())
-  succeed              Boolean
-  ipAddress            String
-  oauthId              Int?
+  parentId  Int
+  createdAt DateTime @default(now())
+  succeed   Boolean
+  ipAddress String
+  oauthId   Int?
 
-  userAuthentication UserAuthentication @relation(fields: [userAuthenticationId], references: [id])
-  oauth              OAuth?             @relation(fields: [oauthId], references: [id])
+  parent User @relation(fields: [parentId], references: [id])
 
-  @@id([userAuthenticationId, createdAt])
-}
+  oauth OAuth? @relation(fields: [oauthId], references: [id])
 
-model UserProfile {
-  id             Int    @id @default(autoincrement())
-  nickname       String @unique
-  introductionId Int?   @unique
-  profileImageId Int?
-
-  User         User?
-  introduction Article?    @relation(fields: [introductionId], references: [id])
-  profileImage PublicFile? @relation(fields: [profileImageId], references: [id])
+  @@id([parentId, createdAt])
 }
 
 model UserPasswordHistory {
@@ -202,17 +186,17 @@ model UserEmail {
 model Group {
   id             Int    @id @default(autoincrement())
   name           String @unique
+  ownerId        Int
   introductionId Int?   @unique
   profileImageId Int?
 
-  ownerId Int
+  owner        User        @relation(fields: [ownerId], references: [id])
+  introduction Article?    @relation(fields: [introductionId], references: [id])
+  profileImage PublicFile? @relation(fields: [profileImageId], references: [id])
 
-  owner        User            @relation(fields: [ownerId], references: [id])
-  members      GroupMember[]
-  actor        Actor?
-  auditLog     GroupAuditLog[]
-  introduction Article?        @relation(fields: [introductionId], references: [id])
-  profileImage PublicFile?     @relation(fields: [profileImageId], references: [id])
+  actor    Actor?
+  members  GroupMember[]
+  auditLog GroupAuditLog[]
 }
 
 model GroupMember {
@@ -253,13 +237,13 @@ model Actor {
   user  User?  @relation(fields: [userId], references: [id])
   group Group? @relation(fields: [groupId], references: [id])
 
+  comment                   Subject?
   ownedFiles                PublicFile[]
   ownedArticles             Article[]
   editedArticles            ArticleEditHistory[]
   ownedProducts             Product[]
   ownedDigitalProductSeries DigitalProductSeries[]
   ownedProductDrafts        ProductDraft[]
-  comment                   Subject?
   reports                   ActorReport[]
 }
 
@@ -279,9 +263,9 @@ model PublicFile {
   createdAt      DateTime @default(now())
 
   owner        Actor @relation(fields: [ownerId], references: [id])
-  uploadedUser User  @relation(fields: [uploadedUserId], references: [id])
+  uploadedUser User  @relation("PublicFile_uploadedUser", fields: [uploadedUserId], references: [id])
 
-  userProfiles  UserProfile[]
+  users         User[]                   @relation("User_profileImage")
   groupProfiles Group[]
   articles      ArticleEditHistoryFile[]
 
@@ -300,10 +284,10 @@ model PrivateFile {
   productId         Int?
   uploadedUserId    Int
 
-  productDraft    DigitalProductDraft     @relation(fields: [productDraftId], references: [id])
-  productSnapshot DigitalProductSnapshot? @relation(fields: [productId], references: [id])
-  product         DigitalProduct?         @relation(fields: [productId], references: [id])
-  User            User                    @relation(fields: [uploadedUserId], references: [id])
+  productDraft    ProductDraftDigital     @relation(fields: [productDraftId], references: [id])
+  productSnapshot ProductSnapshotDigital? @relation(fields: [productId], references: [id])
+  product         ProductDigital?         @relation(fields: [productId], references: [id])
+  uploadedUser    User                    @relation(fields: [uploadedUserId], references: [id])
 }
 
 model Article {
@@ -316,28 +300,28 @@ model Article {
   owner       Actor?             @relation(fields: [ownerId], references: [id])
   lastVersion ArticleEditHistory @relation(fields: [id, createdAt], references: [articleId, createdAt])
 
-  userProfileIntroduction                  UserProfile?
+  userIntroduction                         User?
   userRelationFriendRequest                UserRelationFriendRequest?
   groupIntroduction                        Group?
   review                                   Review?
   productDescription                       Product?
-  physicalProductAddonDetails              PhysicalProductAddon?
-  physicalProductSelectDetails             PhysicalProductSelect?
-  physicalProductSelectItemDetails         PhysicalProductSelectItem?
-  physicalProductOptionDetails             PhysicalProductOption?
-  digitalProductItemDetails                DigitalProductItem?
+  productPhysicalAddonDetails              ProductPhysicalAddon?
+  productPhysicalSelectDetails             ProductPhysicalSelect?
+  productPhysicalSelectItemDetails         ProductPhysicalSelectItem?
+  productPhysicalOptionDetails             ProductPhysicalOption?
+  productDigitalItemDetails                ProductDigitalItem?
   productDraftDescription                  ProductDraft?
-  physicalProductAddonDraftDetails         PhysicalProductAddonDraft?
-  physicalProductSelectDraftDetails        PhysicalProductSelectDraft?
-  physicalProductSelectItemDraftDetails    PhysicalProductSelectItemDraft?
-  physicalProductOptionDraftDetails        PhysicalProductOptionDraft?
-  digitalProductItemDraftDetails           DigitalProductItemDraft?
+  productDraftPhysicalAddonDetails         ProductDraftPhysicalAddon?
+  productDraftPhysicalSelectDetails        ProductDraftPhysicalSelect?
+  productDraftPhysicalSelectItemDetails    ProductDraftPhysicalSelectItem?
+  productDraftPhysicalOptionDetails        ProductDraftPhysicalOption?
+  productDraftDigitalItemDetails           ProductDraftDigitalItem?
   productSnapshotDescription               ProductSnapshot?
-  physicalProductAddonSnapshotDetails      PhysicalProductAddonSnapshot?
-  physicalProductSelectSnapshotDetails     PhysicalProductSelectSnapshot?
-  physicalProductSelectItemSnapshotDetails PhysicalProductSelectItemSnapshot?
-  physicalProductOptionSnapshotSnapshot    PhysicalProductOptionSnapshot?
-  digitalProductItemSnapshotDetails        DigitalProductItemSnapshot?
+  productSnapshotPhysicalAddonDetails      ProductSnapshotPhysicalAddon?
+  productSnapshotPhysicalSelectDetails     ProductSnapshotPhysicalSelect?
+  productSnapshotPhysicalSelectItemDetails ProductSnapshotPhysicalSelectItem?
+  productSnapshotPhysicalOptionSnapshot    ProductSnapshotPhysicalOption?
+  productSnapshotDigitalItemDetails        ProductSnapshotDigitalItem?
   subjectArticle                           SubjectArticle?
   physicalProductCategory                  PhysicalProductCategory?
   digitalProductCategory                   DigitalProductCategory?
@@ -353,10 +337,12 @@ model ArticleEditHistory {
   actorId       Int
   userId        Int
 
-  files   ArticleEditHistoryFile[]
-  actor   Actor                    @relation(fields: [actorId], references: [id])
-  user    User                     @relation(fields: [userId], references: [id])
-  Article Article?
+  parent Article?
+
+  actor Actor @relation(fields: [actorId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  files ArticleEditHistoryFile[]
 
   @@id([articleId, createdAt])
 }
@@ -366,7 +352,7 @@ model ArticleEditHistoryFile {
   fileId               Int
   createdAt            DateTime @default(now())
 
-  article ArticleEditHistory @relation(fields: [articleEditHistoryId, createdAt], references: [articleId, createdAt])
+  history ArticleEditHistory @relation(fields: [articleEditHistoryId, createdAt], references: [articleId, createdAt])
   file    PublicFile         @relation(fields: [fileId], references: [id])
 
   @@id([articleEditHistoryId, fileId])
@@ -382,7 +368,7 @@ model Product {
   id                Int         @id @default(autoincrement())
   type              ProductType
   descriptionId     Int         @unique
-  ownerIdCache      Int // from ProductDraft::ownerId
+  ownerIdCache      Int // draft::ownerId
   visibilityByOwner Boolean
   visibilityByAdmin Boolean
   visibilityCache   Boolean // visibilityByOwner && visibilityByAdmin
@@ -391,43 +377,45 @@ model Product {
   physicalAddonId Int? @unique
   digitalId       Int? @unique
 
-  ownerCache  Actor   @relation(fields: [ownerIdCache], references: [id])
   description Article @relation(fields: [descriptionId], references: [id])
+  ownerCache  Actor   @relation(fields: [ownerIdCache], references: [id])
 
-  physical      PhysicalProduct?      @relation(fields: [physicalId], references: [id])
-  physicalAddon PhysicalProductAddon? @relation(fields: [physicalAddonId], references: [id])
-  digital       DigitalProduct?       @relation(fields: [digitalId], references: [id])
+  physical      ProductPhysical?      @relation(fields: [physicalId], references: [id])
+  physicalAddon ProductPhysicalAddon? @relation(fields: [physicalAddonId], references: [id])
+  digital       ProductDigital?       @relation(fields: [digitalId], references: [id])
 
-  reviews   Review[]
   comment   Subject?
   inquiries ProductInquiry[]
+  reviews   Review[]
 
   draft ProductDraft?
 }
 
-model PhysicalProduct {
+model ProductPhysical {
   // user can buy same physical product multiple times
-  id            Int  @id @default(autoincrement())
+  id            Int     @id @default(autoincrement())
   price         Int
   categoryId    Int
   stockQuantity Int?
   quantityLimit Int?
+  inStockCache  Boolean // !!stockQuantity
 
   super Product?
 
   category PhysicalProductCategory @relation(fields: [categoryId], references: [id])
 
-  addons             PhysicalProductAddon[]
-  selects            PhysicalProductSelect[]
-  options            PhysicalProductOption[]
+  addons             ProductPhysicalAddon[]
+  selects            ProductPhysicalSelect[]
+  options            ProductPhysicalOption[]
   transactions       TransactionBuyItemPhysicalItem[]
   userInventoryItems UserInventoryItemOriginal[]
   cartItems          CartItemPhysical[]
+  wishlistItems      WishlistItemPhysical[]
 
-  draft PhysicalProductDraft?
+  draft ProductDraftPhysical?
 }
 
-model PhysicalProductAddon {
+model ProductPhysicalAddon {
   id                  Int     @id @default(autoincrement())
   parentId            Int
   price               Int
@@ -439,18 +427,19 @@ model PhysicalProductAddon {
   detailsId           Int?    @unique
 
   super  Product?
-  parent PhysicalProduct @relation(fields: [parentId], references: [id])
+  parent ProductPhysical @relation(fields: [parentId], references: [id])
 
   details Article? @relation(fields: [detailsId], references: [id])
 
   transactions       TransactionBuyItemPhysicalItem[]
   userInventoryItems UserInventoryItemAddon[]
   cartItems          CartItemPhysicalAddon[]
+  wishlistItems      WishlistItemPhysicalAddon[]
 
-  draft PhysicalProductAddonDraft?
+  draft ProductDraftPhysicalAddon?
 }
 
-model PhysicalProductSelect {
+model ProductPhysicalSelect {
   id            Int     @id @default(autoincrement())
   parentId      Int
   enabled       Boolean
@@ -458,18 +447,20 @@ model PhysicalProductSelect {
   detailsId     Int?    @unique
   defaultItemId Int?    @unique
 
-  parent PhysicalProduct @relation(fields: [parentId], references: [id])
+  parent ProductPhysical @relation(fields: [parentId], references: [id])
 
   details     Article?                    @relation(fields: [detailsId], references: [id])
-  defaultItem PhysicalProductSelectItem?  @relation("PhysicalProductSelect_defaultItem", fields: [defaultItemId], references: [id])
-  items       PhysicalProductSelectItem[] @relation("PhysicalProductSelectItem_parent")
+  defaultItem ProductPhysicalSelectItem?  @relation("PhysicalProductSelect_defaultItem", fields: [defaultItemId], references: [id])
+  items       ProductPhysicalSelectItem[] @relation("PhysicalProductSelectItem_parent")
 
-  draft PhysicalProductSelectDraft?
+  wishlistItems WishlistItemPhysicalSelectItem[]
+
+  draft ProductDraftPhysicalSelect?
 
   @@index([parentId, enabled, name])
 }
 
-model PhysicalProductSelectItem {
+model ProductPhysicalSelectItem {
   id              Int     @id @default(autoincrement())
   parentId        Int
   additionalPrice Int
@@ -477,21 +468,23 @@ model PhysicalProductSelectItem {
   name            String
   detailsId       Int?    @unique
 
-  parent PhysicalProductSelect @relation("PhysicalProductSelectItem_parent", fields: [parentId], references: [id])
+  parent ProductPhysicalSelect @relation("PhysicalProductSelectItem_parent", fields: [parentId], references: [id])
 
-  default PhysicalProductSelect? @relation("PhysicalProductSelect_defaultItem")
+  default ProductPhysicalSelect? @relation("PhysicalProductSelect_defaultItem")
   details Article?               @relation(fields: [detailsId], references: [id])
 
   transactions       TransactionBuyItemPhysicalItem[]
   userInventoryItems UserInventoryItemOriginalSelectItem[]
   cartItems          CartItemPhysicalSelectItem[]
 
-  draft PhysicalProductSelectItemDraft?
+  wishlistItems WishlistItemPhysicalSelectItem[]
+
+  draft ProductDraftPhysicalSelectItem?
 
   @@index([parentId, enabled, name])
 }
 
-model PhysicalProductOption {
+model ProductPhysicalOption {
   id              Int     @id @default(autoincrement())
   parentId        Int
   additionalPrice Int
@@ -500,18 +493,19 @@ model PhysicalProductOption {
   detailsId       Int?    @unique
   valueTypeJson   String
 
-  parent PhysicalProduct @relation(fields: [parentId], references: [id])
+  parent ProductPhysical @relation(fields: [parentId], references: [id])
 
   details Article? @relation(fields: [detailsId], references: [id])
 
   transactions       TransactionBuyItemPhysicalItem[]
   userInventoryItems UserInventoryItemOriginalOption[]
   cartItems          CartItemPhysicalOption[]
+  wishlistItems      WishlistItemPhysicalOption[]
 
-  draft PhysicalProductOptionDraft?
+  draft ProductDraftPhysicalOption?
 }
 
-model DigitalProduct {
+model ProductDigital {
   // user can buy same digital product multiple times to extend validity
   id           Int    @id @default(autoincrement())
   metadataJson String
@@ -523,13 +517,16 @@ model DigitalProduct {
   category DigitalProductCategory @relation(fields: [categoryId], references: [id])
   series   DigitalProductSeries?  @relation(fields: [seriesId], references: [id])
 
-  items DigitalProductItem[]
+  items ProductDigitalItem[]
   files PrivateFile[]
 
-  draft DigitalProductDraft?
+  draft ProductDraftDigital?
+
+  cartItems     CartItemDigital[]
+  wishlistItems WishlistItemDigital[]
 }
 
-model DigitalProductItem {
+model ProductDigitalItem {
   id               Int     @id @default(autoincrement())
   parentId         Int
   price            Int
@@ -538,13 +535,13 @@ model DigitalProductItem {
   stockQuantity    Int?
   validityDuration Int? // how long user can view the content, null if infinity
 
-  parent  DigitalProduct @relation(fields: [parentId], references: [id])
+  parent  ProductDigital @relation(fields: [parentId], references: [id])
   details Article?       @relation(fields: [detailsId], references: [id])
 
   transactions TransactionBuyItemDigital[]
   cartItems    CartItemDigital[]
 
-  draft DigitalProductItemDraft?
+  draft ProductDraftDigitalItem?
 
   @@unique([parentId, validityDuration])
 }
@@ -555,13 +552,13 @@ model DigitalProductSeries {
   ownerId Int
 
   owner Actor            @relation(fields: [ownerId], references: [id])
-  items DigitalProduct[]
+  items ProductDigital[]
 }
 
 model Review {
   id             Int @id @default(autoincrement())
   articleId      Int @unique
-  productIdCache Int // from transaction::parent::super::id
+  productIdCache Int // transaction::parent::super::id
 
   transaction TransactionBuyItem?
   product     Product             @relation(fields: [productIdCache], references: [id])
@@ -584,9 +581,9 @@ model ProductDraft {
   owner       Actor   @relation(fields: [ownerId], references: [id])
   description Article @relation(fields: [descriptionId], references: [id])
 
-  physicalDraft      PhysicalProductDraft?      @relation(fields: [physicalDraftId], references: [id])
-  physicalAddonDraft PhysicalProductAddonDraft? @relation(fields: [physicalAddonDraftId], references: [id])
-  digitalDraft       DigitalProductDraft?       @relation(fields: [digitalDraftId], references: [id])
+  physicalDraft      ProductDraftPhysical?      @relation(fields: [physicalDraftId], references: [id])
+  physicalAddonDraft ProductDraftPhysicalAddon? @relation(fields: [physicalAddonDraftId], references: [id])
+  digitalDraft       ProductDraftDigital?       @relation(fields: [digitalDraftId], references: [id])
 
   published Product? @relation(fields: [publishedId], references: [id])
   inquiry   Subject?
@@ -594,7 +591,7 @@ model ProductDraft {
   @@index([reviewRequestedAt])
 }
 
-model PhysicalProductDraft {
+model ProductDraftPhysical {
   id            Int  @id @default(autoincrement())
   price         Int
   quantityLimit Int?
@@ -606,14 +603,14 @@ model PhysicalProductDraft {
 
   category PhysicalProductCategory? @relation(fields: [categoryId], references: [id])
 
-  addons  PhysicalProductAddonDraft[]
-  selects PhysicalProductSelectDraft[]
-  options PhysicalProductOptionDraft[]
+  addons  ProductDraftPhysicalAddon[]
+  selects ProductDraftPhysicalSelect[]
+  options ProductDraftPhysicalOption[]
 
-  published PhysicalProduct? @relation(fields: [publishedId], references: [id])
+  published ProductPhysical? @relation(fields: [publishedId], references: [id])
 }
 
-model PhysicalProductAddonDraft {
+model ProductDraftPhysicalAddon {
   id                  Int     @id @default(autoincrement())
   parentId            Int
   price               Int
@@ -625,14 +622,14 @@ model PhysicalProductAddonDraft {
   publishedId Int? @unique
 
   super  ProductDraft?
-  parent PhysicalProductDraft @relation(fields: [parentId], references: [id])
+  parent ProductDraftPhysical @relation(fields: [parentId], references: [id])
 
   details Article? @relation(fields: [detailsId], references: [id])
 
-  published PhysicalProductAddon? @relation(fields: [publishedId], references: [id])
+  published ProductPhysicalAddon? @relation(fields: [publishedId], references: [id])
 }
 
-model PhysicalProductSelectDraft {
+model ProductDraftPhysicalSelect {
   id            Int    @id @default(autoincrement())
   parentId      Int
   name          String
@@ -641,15 +638,15 @@ model PhysicalProductSelectDraft {
 
   publishedId Int @unique
 
-  parent      PhysicalProductDraft             @relation(fields: [parentId], references: [id])
+  parent      ProductDraftPhysical             @relation(fields: [parentId], references: [id])
   details     Article?                         @relation(fields: [detailsId], references: [id])
-  defaultItem PhysicalProductSelectItemDraft?  @relation("PhysicalProductSelect_defaultItem", fields: [defaultItemId], references: [id])
-  items       PhysicalProductSelectItemDraft[] @relation("PhysicalProductSelectItem_parent")
+  defaultItem ProductDraftPhysicalSelectItem?  @relation("PhysicalProductSelect_defaultItem", fields: [defaultItemId], references: [id])
+  items       ProductDraftPhysicalSelectItem[] @relation("PhysicalProductSelectItem_parent")
 
-  published PhysicalProductSelect? @relation(fields: [publishedId], references: [id])
+  published ProductPhysicalSelect? @relation(fields: [publishedId], references: [id])
 }
 
-model PhysicalProductSelectItemDraft {
+model ProductDraftPhysicalSelectItem {
   id              Int     @id @default(autoincrement())
   parentId        Int
   additionalPrice Int
@@ -659,16 +656,16 @@ model PhysicalProductSelectItemDraft {
 
   publishedId Int? @unique
 
-  parent  PhysicalProductSelectDraft  @relation("PhysicalProductSelectItem_parent", fields: [parentId], references: [id])
-  default PhysicalProductSelectDraft? @relation("PhysicalProductSelect_defaultItem")
+  parent  ProductDraftPhysicalSelect  @relation("PhysicalProductSelectItem_parent", fields: [parentId], references: [id])
+  default ProductDraftPhysicalSelect? @relation("PhysicalProductSelect_defaultItem")
   details Article?                    @relation(fields: [detailsId], references: [id])
 
-  published PhysicalProductSelectItem? @relation(fields: [publishedId], references: [id])
+  published ProductPhysicalSelectItem? @relation(fields: [publishedId], references: [id])
 
   @@index([parentId, enabled, name])
 }
 
-model PhysicalProductOptionDraft {
+model ProductDraftPhysicalOption {
   id              Int     @id @default(autoincrement())
   parentId        Int
   additionalPrice Int
@@ -679,13 +676,13 @@ model PhysicalProductOptionDraft {
 
   publishedId Int? @unique
 
-  parent  PhysicalProductDraft @relation(fields: [parentId], references: [id])
+  parent  ProductDraftPhysical @relation(fields: [parentId], references: [id])
   details Article?             @relation(fields: [detailsId], references: [id])
 
-  published PhysicalProductOption? @relation(fields: [publishedId], references: [id])
+  published ProductPhysicalOption? @relation(fields: [publishedId], references: [id])
 }
 
-model DigitalProductDraft {
+model ProductDraftDigital {
   id           Int    @id @default(autoincrement())
   metadataJson String
   categoryId   Int?
@@ -696,13 +693,13 @@ model DigitalProductDraft {
 
   category DigitalProductCategory? @relation(fields: [categoryId], references: [id])
 
-  items DigitalProductItemDraft[]
+  items ProductDraftDigitalItem[]
   files PrivateFile[]
 
-  published DigitalProduct? @relation(fields: [publishedId], references: [id])
+  published ProductDigital? @relation(fields: [publishedId], references: [id])
 }
 
-model DigitalProductItemDraft {
+model ProductDraftDigitalItem {
   id               Int     @id @default(autoincrement())
   parentId         Int
   price            Int
@@ -713,10 +710,10 @@ model DigitalProductItemDraft {
 
   publishedId Int? @unique
 
-  parent  DigitalProductDraft @relation(fields: [parentId], references: [id])
+  parent  ProductDraftDigital @relation(fields: [parentId], references: [id])
   details Article?            @relation(fields: [detailsId], references: [id])
 
-  published DigitalProductItem? @relation(fields: [publishedId], references: [id])
+  published ProductDigitalItem? @relation(fields: [publishedId], references: [id])
 }
 
 model ProductSnapshot {
@@ -730,12 +727,12 @@ model ProductSnapshot {
 
   description Article @relation(fields: [descriptionId], references: [id])
 
-  physical      PhysicalProductSnapshot?      @relation(fields: [physicalId], references: [id])
-  physicalAddon PhysicalProductAddonSnapshot? @relation(fields: [physicalAddonId], references: [id])
-  digital       DigitalProductSnapshot?       @relation(fields: [digitalId], references: [id])
+  physical      ProductSnapshotPhysical?      @relation(fields: [physicalId], references: [id])
+  physicalAddon ProductSnapshotPhysicalAddon? @relation(fields: [physicalAddonId], references: [id])
+  digital       ProductSnapshotDigital?       @relation(fields: [digitalId], references: [id])
 }
 
-model PhysicalProductSnapshot {
+model ProductSnapshotPhysical {
   id            Int  @id @default(autoincrement())
   price         Int
   quantityLimit Int?
@@ -745,12 +742,12 @@ model PhysicalProductSnapshot {
 
   category PhysicalProductCategory @relation(fields: [categoryId], references: [id])
 
-  addons  PhysicalProductAddonSnapshot[]
-  selects PhysicalProductSelectSnapshot[]
-  options PhysicalProductOptionSnapshot[]
+  addons  ProductSnapshotPhysicalAddon[]
+  selects ProductSnapshotPhysicalSelect[]
+  options ProductSnapshotPhysicalOption[]
 }
 
-model PhysicalProductAddonSnapshot {
+model ProductSnapshotPhysicalAddon {
   id                  Int    @id @default(autoincrement())
   parentId            Int
   price               Int
@@ -760,12 +757,12 @@ model PhysicalProductAddonSnapshot {
   detailsId           Int?   @unique
 
   super  ProductSnapshot?
-  parent PhysicalProductSnapshot @relation(fields: [parentId], references: [id])
+  parent ProductSnapshotPhysical @relation(fields: [parentId], references: [id])
 
   details Article? @relation(fields: [detailsId], references: [id])
 }
 
-model PhysicalProductSelectSnapshot {
+model ProductSnapshotPhysicalSelect {
   id            Int     @id @default(autoincrement())
   parentId      Int
   enabled       Boolean
@@ -773,15 +770,15 @@ model PhysicalProductSelectSnapshot {
   detailsId     Int?    @unique
   defaultItemId Int?    @unique
 
-  parent PhysicalProductSnapshot @relation(fields: [parentId], references: [id])
+  parent ProductSnapshotPhysical @relation(fields: [parentId], references: [id])
 
   details Article? @relation(fields: [detailsId], references: [id])
 
-  defaultItem PhysicalProductSelectItemSnapshot?  @relation("PhysicalProductSelectSnapshot_defaultItem", fields: [defaultItemId], references: [id])
-  items       PhysicalProductSelectItemSnapshot[] @relation("PhysicalProductSelectItemSnapshot_parent")
+  defaultItem ProductSnapshotPhysicalSelectItem?  @relation("PhysicalProductSelectSnapshot_defaultItem", fields: [defaultItemId], references: [id])
+  items       ProductSnapshotPhysicalSelectItem[] @relation("PhysicalProductSelectItemSnapshot_parent")
 }
 
-model PhysicalProductSelectItemSnapshot {
+model ProductSnapshotPhysicalSelectItem {
   id              Int     @id @default(autoincrement())
   parentId        Int
   additionalPrice Int
@@ -789,13 +786,13 @@ model PhysicalProductSelectItemSnapshot {
   name            String
   detailsId       Int?    @unique
 
-  parent PhysicalProductSelectSnapshot @relation("PhysicalProductSelectItemSnapshot_parent", fields: [parentId], references: [id])
+  parent ProductSnapshotPhysicalSelect @relation("PhysicalProductSelectItemSnapshot_parent", fields: [parentId], references: [id])
 
-  default PhysicalProductSelectSnapshot? @relation("PhysicalProductSelectSnapshot_defaultItem")
+  default ProductSnapshotPhysicalSelect? @relation("PhysicalProductSelectSnapshot_defaultItem")
   details Article?                       @relation(fields: [detailsId], references: [id])
 }
 
-model PhysicalProductOptionSnapshot {
+model ProductSnapshotPhysicalOption {
   id              Int     @id @default(autoincrement())
   parentId        Int
   additionalPrice Int
@@ -804,12 +801,12 @@ model PhysicalProductOptionSnapshot {
   detailsId       Int?    @unique
   valueTypeJson   String
 
-  parent PhysicalProductSnapshot @relation(fields: [parentId], references: [id])
+  parent ProductSnapshotPhysical @relation(fields: [parentId], references: [id])
 
   details Article? @relation(fields: [detailsId], references: [id])
 }
 
-model DigitalProductSnapshot {
+model ProductSnapshotDigital {
   id           Int    @id @default(autoincrement())
   metadataJson String
   categoryId   Int
@@ -818,11 +815,11 @@ model DigitalProductSnapshot {
 
   category DigitalProductCategory @relation(fields: [categoryId], references: [id])
 
-  items DigitalProductItemSnapshot[]
+  items ProductSnapshotDigitalItem[]
   files PrivateFile[]
 }
 
-model DigitalProductItemSnapshot {
+model ProductSnapshotDigitalItem {
   id               Int     @id @default(autoincrement())
   parentId         Int
   price            Int
@@ -830,7 +827,7 @@ model DigitalProductItemSnapshot {
   detailsId        Int?    @unique
   validityDuration Int? // how long user can view the content, null if infinity
 
-  parent  DigitalProductSnapshot @relation(fields: [parentId], references: [id])
+  parent  ProductSnapshotDigital @relation(fields: [parentId], references: [id])
   details Article?               @relation(fields: [detailsId], references: [id])
 }
 
@@ -851,7 +848,7 @@ model UserInventoryItem {
   removedAt       DateTime?
   isRemovedCache  Boolean // !!removedAt
   isReturnedCache Boolean // !!return
-  returnedAtCache DateTime? // from return::createdAt
+  returnedAtCache DateTime? // return::createdAt
 
   originalId Int? @unique
   addonId    Int? @unique
@@ -873,7 +870,7 @@ model UserInventoryItemOriginal {
   itemId Int
 
   super       UserInventoryItem?
-  item        PhysicalProduct                       @relation(fields: [itemId], references: [id])
+  item        ProductPhysical                       @relation(fields: [itemId], references: [id])
   selectItems UserInventoryItemOriginalSelectItem[]
   options     UserInventoryItemOriginalOption[]
 }
@@ -884,7 +881,7 @@ model UserInventoryItemOriginalSelectItem {
   itemId   Int
 
   parent UserInventoryItemOriginal @relation(fields: [parentId], references: [id])
-  item   PhysicalProductSelectItem @relation(fields: [itemId], references: [id])
+  item   ProductPhysicalSelectItem @relation(fields: [itemId], references: [id])
 }
 
 model UserInventoryItemOriginalOption {
@@ -894,7 +891,7 @@ model UserInventoryItemOriginalOption {
   valueJson String
 
   parent UserInventoryItemOriginal @relation(fields: [parentId], references: [id])
-  option PhysicalProductOption     @relation(fields: [optionId], references: [id])
+  option ProductPhysicalOption     @relation(fields: [optionId], references: [id])
 }
 
 model UserInventoryItemAddon {
@@ -902,7 +899,7 @@ model UserInventoryItemAddon {
   itemId Int
 
   super UserInventoryItem?
-  item  PhysicalProductAddon @relation(fields: [itemId], references: [id])
+  item  ProductPhysicalAddon @relation(fields: [itemId], references: [id])
 }
 
 model UserDigitalProduct {
@@ -1030,10 +1027,10 @@ model TransactionBuyItemPhysicalItem {
 
   parent TransactionBuyItemPhysical @relation(fields: [parentId], references: [id])
 
-  original   PhysicalProduct?           @relation(fields: [originalId], references: [id])
-  addon      PhysicalProductAddon?      @relation(fields: [addonId], references: [id])
-  selectItem PhysicalProductSelectItem? @relation(fields: [selectItemId], references: [id])
-  option     PhysicalProductOption?     @relation(fields: [optionId], references: [id])
+  original   ProductPhysical?           @relation(fields: [originalId], references: [id])
+  addon      ProductPhysicalAddon?      @relation(fields: [addonId], references: [id])
+  selectItem ProductPhysicalSelectItem? @relation(fields: [selectItemId], references: [id])
+  option     ProductPhysicalOption?     @relation(fields: [optionId], references: [id])
 
   userInventoryItems UserInventoryItem[]
 }
@@ -1041,11 +1038,11 @@ model TransactionBuyItemPhysicalItem {
 model TransactionBuyItemDigital {
   id                       Int  @id @default(autoincrement())
   itemId                   Int
-  priceSnapshot            Int // from DigitalProductItem::price
-  validityDurationSnapshot Int? // from DigitalProductItem::validityDuration
+  priceSnapshot            Int // item::price
+  validityDurationSnapshot Int? // item::validityDuration
 
   super TransactionBuyItem?
-  item  DigitalProductItem  @relation(fields: [itemId], references: [id])
+  item  ProductDigitalItem  @relation(fields: [itemId], references: [id])
 
   userDigitalProductItem UserDigitalProductItem?
 }
@@ -1098,9 +1095,9 @@ model PhysicalProductCategory {
 
   child PhysicalProductCategory[] @relation("PhysicalProductCategory_parent")
 
-  productDrafts    PhysicalProductDraft[]
-  productSnapshots PhysicalProductSnapshot[]
-  products         PhysicalProduct[]
+  productDrafts    ProductDraftPhysical[]
+  productSnapshots ProductSnapshotPhysical[]
+  products         ProductPhysical[]
 }
 
 model DigitalProductCategory {
@@ -1113,9 +1110,9 @@ model DigitalProductCategory {
 
   child DigitalProductCategory[] @relation("DigitalProductCategory_parent")
 
-  productDrafts    DigitalProductDraft[]
-  productSnapshots DigitalProductSnapshot[]
-  products         DigitalProduct[]
+  productDrafts    ProductDraftDigital[]
+  productSnapshots ProductSnapshotDigital[]
+  products         ProductDigital[]
 }
 
 enum SubjectType {
@@ -1206,7 +1203,7 @@ model Return {
   fulfilledAt         DateTime?
   isFulfilledCache    Boolean // !!fulfilledAt
   isAcceptedCache     Boolean // !!transaction
-  userIdCache         Int // from UserInventoryItem::userId
+  userIdCache         Int // userInventoryItem::userId
   priceCache          Int // userInventoryItem::transaction::pricePerCountSnapshot
 
   userInventoryItem UserInventoryItem  @relation(fields: [userInventoryItemId], references: [id])
@@ -1221,9 +1218,10 @@ model Return {
 }
 
 model CartItem {
-  id     Int         @id @default(autoincrement())
-  type   ProductType
-  userId Int
+  id        Int         @id @default(autoincrement())
+  type      ProductType
+  userId    Int
+  createdAt DateTime    @default(now())
 
   physicalId      Int? @unique
   physicalAddonId Int? @unique
@@ -1234,19 +1232,25 @@ model CartItem {
   physical      CartItemPhysical?      @relation(fields: [physicalId], references: [id])
   physicalAddon CartItemPhysicalAddon? @relation(fields: [physicalId], references: [id])
   digital       CartItemDigital?       @relation(fields: [digitalId], references: [id])
+
+  @@index([userId, createdAt])
 }
 
 model CartItemPhysical {
-  id        Int @id @default(autoincrement())
-  count     Int
-  productId Int
+  id             Int      @id @default(autoincrement())
+  count          Int
+  productId      Int
+  userIdCache    Int // super::userId
+  createdAtCache DateTime // super::createdAt
 
   super CartItem?
 
-  product PhysicalProduct @relation(fields: [productId], references: [id])
+  product ProductPhysical @relation(fields: [productId], references: [id])
 
   selectItems CartItemPhysicalSelectItem[]
   options     CartItemPhysicalOption[]
+
+  @@index([userIdCache, productId, createdAtCache])
 }
 
 model CartItemPhysicalSelectItem {
@@ -1256,7 +1260,7 @@ model CartItemPhysicalSelectItem {
 
   parent CartItemPhysical @relation(fields: [parentId], references: [id])
 
-  item PhysicalProductSelectItem @relation(fields: [itemId], references: [id])
+  item ProductPhysicalSelectItem @relation(fields: [itemId], references: [id])
 }
 
 model CartItemPhysicalOption {
@@ -1267,7 +1271,7 @@ model CartItemPhysicalOption {
 
   parent CartItemPhysical @relation(fields: [parentId], references: [id])
 
-  option PhysicalProductOption @relation(fields: [optionId], references: [id])
+  option ProductPhysicalOption @relation(fields: [optionId], references: [id])
 }
 
 model CartItemPhysicalAddon {
@@ -1277,15 +1281,110 @@ model CartItemPhysicalAddon {
 
   super CartItem?
 
-  addon PhysicalProductAddon @relation(fields: [addonId], references: [id])
+  addon ProductPhysicalAddon @relation(fields: [addonId], references: [id])
 }
 
 model CartItemDigital {
-  id     Int @id @default(autoincrement())
-  count  Int
-  itemId Int
+  id             Int      @id @default(autoincrement())
+  count          Int
+  itemId         Int
+  userIdCache    Int // super::userId
+  createdAtCache DateTime // super::createdAt
+  productIdCache Int // item::parentId
 
   super CartItem?
 
-  item DigitalProductItem @relation(fields: [itemId], references: [id])
+  item    ProductDigitalItem @relation(fields: [itemId], references: [id])
+  product ProductDigital     @relation(fields: [productIdCache], references: [id])
+
+  @@index([userIdCache, productIdCache, createdAtCache])
+}
+
+enum WishlistItemType {
+  PHYSICAL
+  DIGITAL
+}
+
+model WishlistItem {
+  id        Int              @id @default(autoincrement())
+  type      WishlistItemType
+  userId    Int
+  createdAt DateTime         @default(now())
+
+  physicalId Int? @unique
+  digitalId  Int? @unique
+
+  user User @relation(fields: [userId], references: [id])
+
+  physical WishlistItemPhysical? @relation(fields: [physicalId], references: [id])
+  digital  WishlistItemDigital?  @relation(fields: [digitalId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+model WishlistItemPhysical {
+  id          Int @id @default(autoincrement())
+  productId   Int
+  userIdCache Int // super::userId
+
+  super WishlistItem?
+
+  product ProductPhysical @relation(fields: [productId], references: [id])
+
+  addons      WishlistItemPhysicalAddon[]
+  selectItems WishlistItemPhysicalSelectItem[]
+  options     WishlistItemPhysicalOption[]
+
+  @@unique([userIdCache, productId])
+}
+
+model WishlistItemPhysicalAddon {
+  id          Int @id @default(autoincrement())
+  parentId    Int
+  userIdCache Int // super::userId
+  addonId     Int
+  count       Int
+
+  parent WishlistItemPhysical @relation(fields: [parentId], references: [id])
+  addon  ProductPhysicalAddon @relation(fields: [addonId], references: [id])
+
+  @@unique([userIdCache, addonId])
+}
+
+model WishlistItemPhysicalSelectItem {
+  id           Int @id @default(autoincrement())
+  parentId     Int
+  userIdCache  Int // super::userId
+  selectId     Int
+  selectItemId Int
+
+  parent     WishlistItemPhysical      @relation(fields: [parentId], references: [id])
+  select     ProductPhysicalSelect     @relation(fields: [selectId], references: [id])
+  selectItem ProductPhysicalSelectItem @relation(fields: [selectItemId], references: [id])
+
+  @@unique([userIdCache, selectId])
+}
+
+model WishlistItemPhysicalOption {
+  id          Int @id @default(autoincrement())
+  parentId    Int
+  userIdCache Int // super::userId
+  optionId    Int
+
+  parent WishlistItemPhysical  @relation(fields: [parentId], references: [id])
+  option ProductPhysicalOption @relation(fields: [optionId], references: [id])
+
+  @@unique([userIdCache, optionId])
+}
+
+model WishlistItemDigital {
+  id          Int @id @default(autoincrement())
+  productId   Int
+  userIdCache Int // super::userId
+
+  super WishlistItem?
+
+  product ProductDigital @relation(fields: [productId], references: [id])
+
+  @@unique([userIdCache, productId])
 }
