@@ -34,11 +34,13 @@
   - [x] chat with friend
   - [x] follow
   - [ ] gift products
+- category
+  - [ ] hierarchical categories
 - buy product
   - [x] comment
   - [x] inquiry
   - [x] report
-  - [ ] cart
+  - [x] cart
   - [ ] order
   - [ ] buy
   - [ ] subscription service
@@ -52,6 +54,7 @@
 - sell product
   - [x] sell
   - [x] group
+  - [ ] cancel order
   - [ ] Restrict select item combinations
   - [ ] user role in group
   - [x] draft, review by admin
