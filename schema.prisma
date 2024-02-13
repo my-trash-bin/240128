@@ -28,15 +28,15 @@ model User {
   passwordHistory           UserPasswordHistory[]
   email                     UserEmail[]
   ownedGroups               Group[]
-  groups                    GroupMember[]
-  articleEditHistory        ArticleEditHistory[]
+  groups                    GroupUser[]
+  documentEditHistory       DocumentEditHistory[]
   userPasswordResetRequests UserPasswordResetRequest[]
   transactions              Transaction[]
   inventoryItems            UserInventoryItem[]
   uploadedPublicFiles       PublicFile[]               @relation("PublicFile_uploadedUser")
   uploadedPrivateFiles      PrivateFile[]
   inquiries                 ProductInquiry[]
-  actorInquiries            ActorReport[]
+  memberInquiries           MemberReport[]
   returns                   Return[]
   cartItems                 CartItem[]
   wishlistItems             WishlistItem[]
@@ -44,8 +44,8 @@ model User {
   loginHistory              UserLoginHistory[]
 
   // 1:1
-  actor        Actor?
-  introduction Article?    @relation(fields: [introductionId], references: [id])
+  member       Member?
+  introduction Document?   @relation(fields: [introductionId], references: [id])
   profileImage PublicFile? @relation("User_profileImage", fields: [profileImageId], references: [id])
 }
 
@@ -85,15 +85,15 @@ model UserRelationCacheByUser {
 model UserRelationFriendRequest {
   fromId           Int
   toId             Int
-  articleId        Int      @unique
+  documentId       Int      @unique
   createdAt        DateTime @default(now())
   isCancelled      Boolean
   isRejected       Boolean
   isAvailableCache Boolean // !isCancelled && !isRejected
 
-  from    User    @relation("UserRelationFriendRequest_from", fields: [fromId], references: [id])
-  to      User    @relation("UserRelationFriendRequest_to", fields: [toId], references: [id])
-  article Article @relation(fields: [articleId], references: [id])
+  from     User     @relation("UserRelationFriendRequest_from", fields: [fromId], references: [id])
+  to       User     @relation("UserRelationFriendRequest_to", fields: [toId], references: [id])
+  document Document @relation(fields: [documentId], references: [id])
 
   @@id([fromId, toId])
   @@index([fromId, createdAt])
@@ -183,6 +183,28 @@ model UserEmail {
   @@index([blockedCache, email])
 }
 
+model PopupNotice {
+  id        Int      @id @default(autoincrement())
+  contentJs String // evaluated to function returning React Component
+  createdAt DateTime @default(now())
+  startAt   DateTime
+  endAt     DateTime
+}
+
+model UserNotification {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  documentId  Int?
+  createdAt   DateTime  @default(now())
+  readAt      DateTime?
+  isReadCache Boolean // !!readAt
+
+  document Document? @relation(fields: [documentId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([userId, isReadCache, createdAt])
+}
+
 model Group {
   id             Int    @id @default(autoincrement())
   name           String @unique
@@ -191,15 +213,15 @@ model Group {
   profileImageId Int?
 
   owner        User        @relation(fields: [ownerId], references: [id])
-  introduction Article?    @relation(fields: [introductionId], references: [id])
+  introduction Document?   @relation(fields: [introductionId], references: [id])
   profileImage PublicFile? @relation(fields: [profileImageId], references: [id])
 
-  actor    Actor?
-  members  GroupMember[]
+  member   Member?
+  users    GroupUser[]
   auditLog GroupAuditLog[]
 }
 
-model GroupMember {
+model GroupUser {
   groupId Int
   userId  Int
 
@@ -222,14 +244,14 @@ model GroupAuditLog {
   @@index([groupId, logType, createdAt])
 }
 
-enum ActorType {
+enum MemberType {
   USER
   GROUP
 }
 
-model Actor {
-  id   Int       @id @default(autoincrement())
-  type ActorType
+model Member {
+  id   Int        @id @default(autoincrement())
+  type MemberType
 
   userId  Int? @unique // null if system
   groupId Int? @unique // null if not as group member
@@ -239,12 +261,12 @@ model Actor {
 
   comment                   Subject?
   ownedFiles                PublicFile[]
-  ownedArticles             Article[]
-  editedArticles            ArticleEditHistory[]
+  ownedDocuments            Document[]
+  editedDocuments           DocumentEditHistory[]
   ownedProducts             Product[]
   ownedDigitalProductSeries DigitalProductSeries[]
   ownedProductDrafts        ProductDraft[]
-  reports                   ActorReport[]
+  reports                   MemberReport[]
 }
 
 model PublicFile {
@@ -262,12 +284,12 @@ model PublicFile {
   markAsDeleted  Boolean
   createdAt      DateTime @default(now())
 
-  owner        Actor @relation(fields: [ownerId], references: [id])
-  uploadedUser User  @relation("PublicFile_uploadedUser", fields: [uploadedUserId], references: [id])
+  owner        Member @relation(fields: [ownerId], references: [id])
+  uploadedUser User   @relation("PublicFile_uploadedUser", fields: [uploadedUserId], references: [id])
 
-  users         User[]                   @relation("User_profileImage")
+  users         User[]                    @relation("User_profileImage")
   groupProfiles Group[]
-  articles      ArticleEditHistoryFile[]
+  documents     DocumentEditHistoryFile[]
 
   @@index([referenceCount, createdAt])
 }
@@ -290,15 +312,15 @@ model PrivateFile {
   uploadedUser    User                    @relation(fields: [uploadedUserId], references: [id])
 }
 
-model Article {
+model Document {
   id            Int      @id @default(autoincrement())
-  ownerId       Int? // null if no actor has write permission
+  ownerId       Int? // null if no member has write permission
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
-  lastTimeCache DateTime @unique // SELECT MAX(createdAt) FROM ArticleEditHistory WHERE articleId = ${id}
+  lastTimeCache DateTime @unique // SELECT MAX(createdAt) FROM DodumentEditHistory WHERE documentId = ${id}
 
-  owner       Actor?             @relation(fields: [ownerId], references: [id])
-  lastVersion ArticleEditHistory @relation(fields: [id, createdAt], references: [articleId, createdAt])
+  owner       Member?             @relation(fields: [ownerId], references: [id])
+  lastVersion DocumentEditHistory @relation(fields: [id, createdAt], references: [documentId, createdAt])
 
   userIntroduction                         User?
   userRelationFriendRequest                UserRelationFriendRequest?
@@ -322,40 +344,42 @@ model Article {
   productSnapshotPhysicalSelectItemDetails ProductSnapshotPhysicalSelectItem?
   productSnapshotPhysicalOptionSnapshot    ProductSnapshotPhysicalOption?
   productSnapshotDigitalItemDetails        ProductSnapshotDigitalItem?
-  subjectArticle                           SubjectArticle?
+  subjectdocument                          SubjectDocument?
   physicalProductCategory                  PhysicalProductCategory?
   digitalProductCategory                   DigitalProductCategory?
+
+  userNotification UserNotification[]
 
   @@unique([id, createdAt])
 }
 
-model ArticleEditHistory {
-  articleId     Int
+model DocumentEditHistory {
+  documentId    Int
   createdAt     DateTime @default(now())
   title         String?
-  messageBbcode String
-  actorId       Int
+  contentCustom String // markdown, bbcode or json, custom format
+  memberId      Int
   userId        Int
 
-  parent Article?
+  parent Document?
 
-  actor Actor @relation(fields: [actorId], references: [id])
-  user  User  @relation(fields: [userId], references: [id])
+  member Member @relation(fields: [memberId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
 
-  files ArticleEditHistoryFile[]
+  files DocumentEditHistoryFile[]
 
-  @@id([articleId, createdAt])
+  @@id([documentId, createdAt])
 }
 
-model ArticleEditHistoryFile {
-  articleEditHistoryId Int
-  fileId               Int
-  createdAt            DateTime @default(now())
+model DocumentEditHistoryFile {
+  documentEditHistoryId Int
+  fileId                Int
+  createdAt             DateTime @default(now())
 
-  history ArticleEditHistory @relation(fields: [articleEditHistoryId, createdAt], references: [articleId, createdAt])
-  file    PublicFile         @relation(fields: [fileId], references: [id])
+  history DocumentEditHistory @relation(fields: [documentEditHistoryId, createdAt], references: [documentId, createdAt])
+  file    PublicFile          @relation(fields: [fileId], references: [id])
 
-  @@id([articleEditHistoryId, fileId])
+  @@id([documentEditHistoryId, fileId])
 }
 
 enum ProductType {
@@ -377,8 +401,8 @@ model Product {
   physicalAddonId Int? @unique
   digitalId       Int? @unique
 
-  description Article @relation(fields: [descriptionId], references: [id])
-  ownerCache  Actor   @relation(fields: [ownerIdCache], references: [id])
+  description Document @relation(fields: [descriptionId], references: [id])
+  ownerCache  Member   @relation(fields: [ownerIdCache], references: [id])
 
   physical      ProductPhysical?      @relation(fields: [physicalId], references: [id])
   physicalAddon ProductPhysicalAddon? @relation(fields: [physicalAddonId], references: [id])
@@ -429,7 +453,7 @@ model ProductPhysicalAddon {
   super  Product?
   parent ProductPhysical @relation(fields: [parentId], references: [id])
 
-  details Article? @relation(fields: [detailsId], references: [id])
+  details Document? @relation(fields: [detailsId], references: [id])
 
   transactions       TransactionBuyItemPhysicalItem[]
   userInventoryItems UserInventoryItemAddon[]
@@ -449,7 +473,7 @@ model ProductPhysicalSelect {
 
   parent ProductPhysical @relation(fields: [parentId], references: [id])
 
-  details     Article?                    @relation(fields: [detailsId], references: [id])
+  details     Document?                   @relation(fields: [detailsId], references: [id])
   defaultItem ProductPhysicalSelectItem?  @relation("PhysicalProductSelect_defaultItem", fields: [defaultItemId], references: [id])
   items       ProductPhysicalSelectItem[] @relation("PhysicalProductSelectItem_parent")
 
@@ -471,7 +495,7 @@ model ProductPhysicalSelectItem {
   parent ProductPhysicalSelect @relation("PhysicalProductSelectItem_parent", fields: [parentId], references: [id])
 
   default ProductPhysicalSelect? @relation("PhysicalProductSelect_defaultItem")
-  details Article?               @relation(fields: [detailsId], references: [id])
+  details Document?              @relation(fields: [detailsId], references: [id])
 
   transactions       TransactionBuyItemPhysicalItem[]
   userInventoryItems UserInventoryItemOriginalSelectItem[]
@@ -495,7 +519,7 @@ model ProductPhysicalOption {
 
   parent ProductPhysical @relation(fields: [parentId], references: [id])
 
-  details Article? @relation(fields: [detailsId], references: [id])
+  details Document? @relation(fields: [detailsId], references: [id])
 
   transactions       TransactionBuyItemPhysicalItem[]
   userInventoryItems UserInventoryItemOriginalOption[]
@@ -536,7 +560,7 @@ model ProductDigitalItem {
   validityDuration Int? // how long user can view the content, null if infinity
 
   parent  ProductDigital @relation(fields: [parentId], references: [id])
-  details Article?       @relation(fields: [detailsId], references: [id])
+  details Document?      @relation(fields: [detailsId], references: [id])
 
   transactions TransactionBuyItemDigital[]
   cartItems    CartItemDigital[]
@@ -551,18 +575,18 @@ model DigitalProductSeries {
   name    String @unique
   ownerId Int
 
-  owner Actor            @relation(fields: [ownerId], references: [id])
+  owner Member           @relation(fields: [ownerId], references: [id])
   items ProductDigital[]
 }
 
 model Review {
   id             Int @id @default(autoincrement())
-  articleId      Int @unique
+  documentId     Int @unique
   productIdCache Int // transaction::parent::super::id
 
   transaction TransactionBuyItem?
   product     Product             @relation(fields: [productIdCache], references: [id])
-  article     Article             @relation(fields: [articleId], references: [id])
+  document    Document            @relation(fields: [documentId], references: [id])
 }
 
 model ProductDraft {
@@ -578,8 +602,8 @@ model ProductDraft {
 
   publishedId Int? @unique
 
-  owner       Actor   @relation(fields: [ownerId], references: [id])
-  description Article @relation(fields: [descriptionId], references: [id])
+  owner       Member   @relation(fields: [ownerId], references: [id])
+  description Document @relation(fields: [descriptionId], references: [id])
 
   physicalDraft      ProductDraftPhysical?      @relation(fields: [physicalDraftId], references: [id])
   physicalAddonDraft ProductDraftPhysicalAddon? @relation(fields: [physicalAddonDraftId], references: [id])
@@ -624,7 +648,7 @@ model ProductDraftPhysicalAddon {
   super  ProductDraft?
   parent ProductDraftPhysical @relation(fields: [parentId], references: [id])
 
-  details Article? @relation(fields: [detailsId], references: [id])
+  details Document? @relation(fields: [detailsId], references: [id])
 
   published ProductPhysicalAddon? @relation(fields: [publishedId], references: [id])
 }
@@ -639,7 +663,7 @@ model ProductDraftPhysicalSelect {
   publishedId Int @unique
 
   parent      ProductDraftPhysical             @relation(fields: [parentId], references: [id])
-  details     Article?                         @relation(fields: [detailsId], references: [id])
+  details     Document?                        @relation(fields: [detailsId], references: [id])
   defaultItem ProductDraftPhysicalSelectItem?  @relation("PhysicalProductSelect_defaultItem", fields: [defaultItemId], references: [id])
   items       ProductDraftPhysicalSelectItem[] @relation("PhysicalProductSelectItem_parent")
 
@@ -658,7 +682,7 @@ model ProductDraftPhysicalSelectItem {
 
   parent  ProductDraftPhysicalSelect  @relation("PhysicalProductSelectItem_parent", fields: [parentId], references: [id])
   default ProductDraftPhysicalSelect? @relation("PhysicalProductSelect_defaultItem")
-  details Article?                    @relation(fields: [detailsId], references: [id])
+  details Document?                   @relation(fields: [detailsId], references: [id])
 
   published ProductPhysicalSelectItem? @relation(fields: [publishedId], references: [id])
 
@@ -677,7 +701,7 @@ model ProductDraftPhysicalOption {
   publishedId Int? @unique
 
   parent  ProductDraftPhysical @relation(fields: [parentId], references: [id])
-  details Article?             @relation(fields: [detailsId], references: [id])
+  details Document?            @relation(fields: [detailsId], references: [id])
 
   published ProductPhysicalOption? @relation(fields: [publishedId], references: [id])
 }
@@ -711,7 +735,7 @@ model ProductDraftDigitalItem {
   publishedId Int? @unique
 
   parent  ProductDraftDigital @relation(fields: [parentId], references: [id])
-  details Article?            @relation(fields: [detailsId], references: [id])
+  details Document?           @relation(fields: [detailsId], references: [id])
 
   published ProductDigitalItem? @relation(fields: [publishedId], references: [id])
 }
@@ -725,7 +749,7 @@ model ProductSnapshot {
   physicalAddonId Int? @unique
   digitalId       Int? @unique
 
-  description Article @relation(fields: [descriptionId], references: [id])
+  description Document @relation(fields: [descriptionId], references: [id])
 
   physical      ProductSnapshotPhysical?      @relation(fields: [physicalId], references: [id])
   physicalAddon ProductSnapshotPhysicalAddon? @relation(fields: [physicalAddonId], references: [id])
@@ -759,7 +783,7 @@ model ProductSnapshotPhysicalAddon {
   super  ProductSnapshot?
   parent ProductSnapshotPhysical @relation(fields: [parentId], references: [id])
 
-  details Article? @relation(fields: [detailsId], references: [id])
+  details Document? @relation(fields: [detailsId], references: [id])
 }
 
 model ProductSnapshotPhysicalSelect {
@@ -772,7 +796,7 @@ model ProductSnapshotPhysicalSelect {
 
   parent ProductSnapshotPhysical @relation(fields: [parentId], references: [id])
 
-  details Article? @relation(fields: [detailsId], references: [id])
+  details Document? @relation(fields: [detailsId], references: [id])
 
   defaultItem ProductSnapshotPhysicalSelectItem?  @relation("PhysicalProductSelectSnapshot_defaultItem", fields: [defaultItemId], references: [id])
   items       ProductSnapshotPhysicalSelectItem[] @relation("PhysicalProductSelectItemSnapshot_parent")
@@ -789,7 +813,7 @@ model ProductSnapshotPhysicalSelectItem {
   parent ProductSnapshotPhysicalSelect @relation("PhysicalProductSelectItemSnapshot_parent", fields: [parentId], references: [id])
 
   default ProductSnapshotPhysicalSelect? @relation("PhysicalProductSelectSnapshot_defaultItem")
-  details Article?                       @relation(fields: [detailsId], references: [id])
+  details Document?                      @relation(fields: [detailsId], references: [id])
 }
 
 model ProductSnapshotPhysicalOption {
@@ -803,7 +827,7 @@ model ProductSnapshotPhysicalOption {
 
   parent ProductSnapshotPhysical @relation(fields: [parentId], references: [id])
 
-  details Article? @relation(fields: [detailsId], references: [id])
+  details Document? @relation(fields: [detailsId], references: [id])
 }
 
 model ProductSnapshotDigital {
@@ -828,7 +852,7 @@ model ProductSnapshotDigitalItem {
   validityDuration Int? // how long user can view the content, null if infinity
 
   parent  ProductSnapshotDigital @relation(fields: [parentId], references: [id])
-  details Article?               @relation(fields: [detailsId], references: [id])
+  details Document?              @relation(fields: [detailsId], references: [id])
 }
 
 enum UserInventoryItemType {
@@ -1086,12 +1110,12 @@ model TransactionCashOutCredit {
 }
 
 model PhysicalProductCategory {
-  id        Int  @id @default(autoincrement())
-  parentId  Int?
-  articleId Int  @unique
+  id         Int  @id @default(autoincrement())
+  parentId   Int?
+  documentId Int  @unique
 
-  parent  PhysicalProductCategory? @relation("PhysicalProductCategory_parent", fields: [parentId], references: [id])
-  article Article                  @relation(fields: [articleId], references: [id])
+  parent   PhysicalProductCategory? @relation("PhysicalProductCategory_parent", fields: [parentId], references: [id])
+  document Document                 @relation(fields: [documentId], references: [id])
 
   child PhysicalProductCategory[] @relation("PhysicalProductCategory_parent")
 
@@ -1101,12 +1125,12 @@ model PhysicalProductCategory {
 }
 
 model DigitalProductCategory {
-  id        Int  @id @default(autoincrement())
-  parentId  Int?
-  articleId Int  @unique
+  id         Int  @id @default(autoincrement())
+  parentId   Int?
+  documentId Int  @unique
 
-  parent  DigitalProductCategory? @relation("DigitalProductCategory_parent", fields: [parentId], references: [id])
-  article Article                 @relation(fields: [articleId], references: [id])
+  parent   DigitalProductCategory? @relation("DigitalProductCategory_parent", fields: [parentId], references: [id])
+  document Document                @relation(fields: [documentId], references: [id])
 
   child DigitalProductCategory[] @relation("DigitalProductCategory_parent")
 
@@ -1117,11 +1141,11 @@ model DigitalProductCategory {
 
 enum SubjectType {
   PRODUCT_COMMENT
-  ACTOR_COMMENT
+  MEMBER_COMMENT
   USER_RELATION
   PRODUCT_DRAFT
   PRODUCT_INQUIRY
-  ACTOR_REPORT
+  BEBMER_REPORT
   RETURN
 }
 
@@ -1131,31 +1155,31 @@ model Subject {
   createdAt DateTime    @default(now())
 
   productId        Int? @unique
-  actorId          Int? @unique
+  memberId         Int? @unique
   userRelationId   Int? @unique
   productDraftId   Int? @unique
   productInquiryId Int? @unique
-  actorReportId    Int? @unique
+  memberReportId   Int? @unique
   returnId         Int? @unique
 
   product        Product?        @relation(fields: [productId], references: [id])
-  actor          Actor?          @relation(fields: [actorId], references: [id])
+  member         Member?         @relation(fields: [memberId], references: [id])
   userRelation   UserRelation?   @relation(fields: [userRelationId], references: [id])
   productDraft   ProductDraft?   @relation(fields: [productDraftId], references: [id])
   productInquiry ProductInquiry? @relation(fields: [productInquiryId], references: [id])
-  actorReport    ActorReport?    @relation(fields: [actorReportId], references: [id])
+  memberReport   MemberReport?   @relation(fields: [memberReportId], references: [id])
   return         Return?         @relation(fields: [returnId], references: [id])
 
-  articles SubjectArticle[]
+  documents SubjectDocument[]
 }
 
-model SubjectArticle {
-  id        Int @id @default(autoincrement())
-  parentId  Int
-  articleId Int @unique
+model SubjectDocument {
+  id         Int @id @default(autoincrement())
+  parentId   Int
+  documentId Int @unique
 
-  parent  Subject @relation(fields: [parentId], references: [id])
-  article Article @relation(fields: [articleId], references: [id])
+  parent   Subject  @relation(fields: [parentId], references: [id])
+  document Document @relation(fields: [documentId], references: [id])
 }
 
 model ProductInquiry {
@@ -1178,7 +1202,7 @@ model ProductInquiry {
   @@index([toAdmin, toId, isClosedCache, createdAt])
 }
 
-model ActorReport {
+model MemberReport {
   id            Int       @id @default(autoincrement())
   fromId        Int
   toId          Int
@@ -1188,8 +1212,8 @@ model ActorReport {
 
   super Subject?
 
-  from User  @relation(fields: [fromId], references: [id])
-  to   Actor @relation(fields: [toId], references: [id])
+  from User   @relation(fields: [fromId], references: [id])
+  to   Member @relation(fields: [toId], references: [id])
 
   @@index([fromId, createdAt])
   @@index([fromId, isClosedCache, createdAt])
