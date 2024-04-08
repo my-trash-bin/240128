@@ -64,6 +64,8 @@
 - event
   - [ ] redeem
   - [ ] promotion
+    - [ ] promotion period
+    - [ ] promotion count limit
     - [ ] restrict promotion combinations
   - [ ] coupon
     - [ ] restrict coupon combinations
